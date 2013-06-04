@@ -24,7 +24,7 @@ import pmap.OrderResponse;
 public class TestClient implements SessionEventObserver
 {
    public TestClient (String host, int port,
-		      String [] schemas) throws IOException, XmitException
+                      String [] schemas) throws IOException, XmitException
    {
       System.out.println ("Creating TestClient");
 
@@ -43,75 +43,75 @@ public class TestClient implements SessionEventObserver
    {
       System.err.println ("Got OrderResponse");
    }
-   
+
    public void onEstablished (Session s)
    {
       System.out.println ("Session established");
 
       try
       {
-	 OrderProps op = new OrderProps ();
-	 MutableOrderProps mp = new MutableOrderProps ();
+         OrderProps op = new OrderProps ();
+         MutableOrderProps mp = new MutableOrderProps ();
 
-	 LimitPriceType lp = new LimitPriceType ();
-	 lp.setPrice (new Decimal (10));
+         LimitPriceType lp = new LimitPriceType ();
+         lp.setPrice (new Decimal (10));
 
-	 StdQuantity qty = new StdQuantity ();
-	 qty.setOrderQty (500);
-	 
-	 op.setSide (Side.Buy);
-	 op.setTradableId ("MLT");
-	 op.setMutableProps (mp);
+         StdQuantity qty = new StdQuantity ();
+         qty.setOrderQty (500);
 
-	 mp.setQuantity (qty);
-	 mp.setPriceType (lp);
-	 mp.setTimeInForce (TimeInForce.Day);
-	 
-	 InsertOrder o = new InsertOrder ();
-	 o.setClientOrderId (1);
-	 o.setOrderProps (op);
+         op.setSide (Side.Buy);
+         op.setTradableId ("MLT");
+         op.setMutableProps (mp);
 
-	 session.send (o);
+         mp.setQuantity (qty);
+         mp.setPriceType (lp);
+         mp.setTimeInForce (TimeInForce.Day);
+
+         InsertOrder o = new InsertOrder ();
+         o.setClientOrderId (1);
+         o.setOrderProps (op);
+
+         session.send (o);
       }
       catch (XmitException e)
       {
-	 System.err.println ("ERROR: " + e.getMessage ());
-	 e.printStackTrace ();
-	 System.exit (1);
+         System.err.println ("ERROR: " + e.getMessage ());
+         e.printStackTrace ();
+         System.exit (1);
       }
       catch (IOException e)
       {
-	 System.err.println ("ERROR: " + e.getMessage ());
-	 e.printStackTrace ();
-	 System.exit (1);
+         System.err.println ("ERROR: " + e.getMessage ());
+         e.printStackTrace ();
+         System.exit (1);
       }
    }
-   
+
    public void onRejected (String reason)
    {
       System.out.println ("Session rejected: " + reason);
       System.exit (1);
    }
-   
+
    public static void main (String... args) throws Exception
    {
       if (args.length < 3)
       {
-	 System.out.println (
-	    "Usage: TestClient <host> <port> <schema> [schema]");
-	 System.exit (1);
+         System.out.println (
+            "Usage: TestClient <host> <port> <schema> [schema]");
+         System.exit (1);
       }
 
       try
       {
-	 new TestClient (args [0], Integer.parseInt (args [1]),
-			 Arrays.copyOfRange (args, 2, args.length));
+         new TestClient (args [0], Integer.parseInt (args [1]),
+                         Arrays.copyOfRange (args, 2, args.length));
       }
       catch (Exception e)
       {
-	 System.err.println ("ERROR: " + e.getMessage ());
+         System.err.println ("ERROR: " + e.getMessage ());
 
-	 e.printStackTrace ();
+         e.printStackTrace ();
       }
    }
 

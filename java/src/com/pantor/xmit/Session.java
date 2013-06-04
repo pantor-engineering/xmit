@@ -39,12 +39,12 @@ public final class Session implements Runnable
    {
       NegotiateTimerTask (Session s)
       {
-	 this.session = s;
+         this.session = s;
       }
 
       public void run ()
       {
-	 session.onNegotiateTimedOut ();
+         session.onNegotiateTimedOut ();
       }
 
       Session session;
@@ -54,12 +54,12 @@ public final class Session implements Runnable
    {
       EstablishTimerTask (Session s)
       {
-	 this.session = s;
+         this.session = s;
       }
 
       public void run ()
       {
-	 session.onEstablishTimedOut ();
+         session.onEstablishTimedOut ();
       }
 
       Session session;
@@ -69,22 +69,22 @@ public final class Session implements Runnable
    {
       HeartbeatTimerTask (Session s)
       {
-	 this.session = s;
+         this.session = s;
       }
 
       public void run ()
       {
-	 session.sendHeartbeat ();
+         session.sendHeartbeat ();
       }
 
       Session session;
    }
 
    public Session (DatagramSocket socket,
-		   String [] schemas,
-		   SessionEventObserver obs,
-		   int keepAliveInterval,
-		   int verbosity) throws IOException, XmitException
+                   String [] schemas,
+                   SessionEventObserver obs,
+                   int keepAliveInterval,
+                   int verbosity) throws IOException, XmitException
    {
       this.obs = obs;
       this.keepAliveInterval = keepAliveInterval;
@@ -95,16 +95,16 @@ public final class Session implements Runnable
 
       try
       {
-	 DefaultObjectModel om = new DefaultObjectModel (schemas);
-	 client = new Client (socket, om);
-	 client.addObserver (this);
+         DefaultObjectModel om = new DefaultObjectModel (schemas);
+         client = new Client (socket, om);
+         client.addObserver (this);
 
-	 appRegistry = new DefaultObsRegistry (om);
-	 appDispatcher = new Dispatcher (om, appRegistry);
+         appRegistry = new DefaultObsRegistry (om);
+         appDispatcher = new Dispatcher (om, appRegistry);
       }
       catch (BlinkException e)
       {
-	 throw new XmitException ("BlinkException: " + e.getMessage ());
+         throw new XmitException ("BlinkException: " + e.getMessage ());
       }
    }
 
@@ -112,77 +112,77 @@ public final class Session implements Runnable
    {
       try
       {
-	 appRegistry.addObserver (obs);
+         appRegistry.addObserver (obs);
       }
       catch (BlinkException e)
       {
-	 throw new XmitException ("BlinkException: " + e.getMessage ());
+         throw new XmitException ("BlinkException: " + e.getMessage ());
       }
    }
-   
+
    public void initiate (Object credentials) throws IOException, XmitException
    {
       if (verbosity > 0)
-	 log.info ("=> Initiate");
-      
+         log.info ("=> Initiate");
+
       this.credentials = credentials;
-	 
+
       if (! negotiated)
-	 negotiate ();
+         negotiate ();
       else
-	 establish ();
+         establish ();
    }
-   
+
    public void terminate (String reason) throws IOException, XmitException
    {
       if (verbosity > 0)
-	 log.info ("=> Terminate");
-      
+         log.info ("=> Terminate");
+
       hbtTask.cancel ();
       hbtTask = null;
-      
+
       Terminate t = new Terminate ();
       t.setSessionId (sessionId);
       if (! reason.isEmpty ())
-	 t.setReason (reason);
-      
+         t.setReason (reason);
+
       try
       {
-	 client.send (t);
+         client.send (t);
       }
       catch (BlinkException e)
       {
-	 throw new XmitException ("BlinkException: " + e.getMessage ());
+         throw new XmitException ("BlinkException: " + e.getMessage ());
       }
    }
 
    public void send (Object obj) throws IOException, XmitException
    {
       if (verbosity > 0)
-	 log.info ("=> Sending " + obj);
-      
+         log.info ("=> Sending " + obj);
+
       try
       {
-	 client.send (obj);
+         client.send (obj);
       }
       catch (BlinkException e)
       {
-	 throw new XmitException ("BlinkException: " + e.getMessage ());
+         throw new XmitException ("BlinkException: " + e.getMessage ());
       }
    }
-   
-   public void run () 
+
+   public void run ()
    {
       try
       {
-	 client.readLoop ();
+         client.readLoop ();
       }
       catch (Throwable e)
       {
-	 e.printStackTrace ();
-	 while (e.getCause () != null)
-	    e = e.getCause ();
-	 log.severe (e.toString ());
+         e.printStackTrace ();
+         while (e.getCause () != null)
+            e = e.getCause ();
+         log.severe (e.toString ());
       }
    }
 
@@ -199,32 +199,32 @@ public final class Session implements Runnable
    {
       sessionId = UUID.randomUUID ().toString ();
       tsp = System.currentTimeMillis () * 1000000;
-	 
+
       Negotiate n = new Negotiate ();
       n.setSessionId (sessionId);
       n.setTimestamp (tsp);
       n.setClientFlow (FlowType.Unsequenced);
       n.setCredentials (credentials);
-	 
+
       try
       {
-	 client.send (n);
+         client.send (n);
       }
       catch (BlinkException e)
       {
-	 throw new XmitException ("BlinkException: " + e.getMessage ());
+         throw new XmitException ("BlinkException: " + e.getMessage ());
       }
 
       timerTask = new Session.NegotiateTimerTask (this);
 
       timer.schedule (timerTask, 2000);
    }
-   
+
    private void establish () throws IOException, XmitException
    {
       if (verbosity > 0)
-	 log.info ("=> Establish");
-      
+         log.info ("=> Establish");
+
       tsp = System.currentTimeMillis () * 1000000;
 
       Establish m = new Establish ();
@@ -233,18 +233,18 @@ public final class Session implements Runnable
       m.setSessionId (sessionId);
       m.setKeepaliveInterval (keepAliveInterval);
       m.setCredentials (credentials);
-      
+
       try
       {
-	 client.send (m);
+         client.send (m);
       }
       catch (BlinkException e)
       {
-	 throw new XmitException ("BlinkException: " + e.getMessage ());
+         throw new XmitException ("BlinkException: " + e.getMessage ());
       }
 
       timerTask = new Session.EstablishTimerTask (this);
-      
+
       timer.schedule (timerTask, 2000);
    }
 
@@ -252,151 +252,151 @@ public final class Session implements Runnable
    {
       try
       {
-	 log.severe ("No negotiation response, retrying");
-	 
-	 negotiate ();
+         log.severe ("No negotiation response, retrying");
+
+         negotiate ();
       }
       catch (Exception e)
       {
-	 obs.onRejected (e.getMessage ());
+         obs.onRejected (e.getMessage ());
       }
    }
-   
+
    private void onEstablishTimedOut ()
    {
       try
       {
-	 log.severe ("No establish response, retrying");
-	 
-	 establish ();
+         log.severe ("No establish response, retrying");
+
+         establish ();
       }
       catch (Exception e)
       {
-	 obs.onRejected (e.getMessage ());
+         obs.onRejected (e.getMessage ());
       }
    }
-   
+
    private void sendHeartbeat ()
    {
       if (verbosity > 0)
-	 log.info ("=> Heartbeat");
-      
+         log.info ("=> Heartbeat");
+
       try
       {
-	 Heartbeat hbt = new Heartbeat ();
+         Heartbeat hbt = new Heartbeat ();
 
-	 client.send (hbt);
+         client.send (hbt);
       }
       catch (Exception e)
       {
-	 hbtTask.cancel ();
-	 hbtTask = null;
+         hbtTask.cancel ();
+         hbtTask = null;
 
-	 obs.onRejected (e.getMessage ());
+         obs.onRejected (e.getMessage ());
       }
    }
-   
+
    //
    // Observer methods
-   // 
+   //
 
    public void onNegotiationResponse (NegotiationResponse obj)
       throws IOException, XmitException
    {
       if (obj.getRequestTimestamp () != tsp)
-	 throw new XmitException ("Negotiation response does not match " +
-				  obj.getRequestTimestamp ());
-      
+         throw new XmitException ("Negotiation response does not match " +
+                                  obj.getRequestTimestamp ());
+
       if (verbosity > 0)
-	 log.info ("<= NegotiationResponse");
+         log.info ("<= NegotiationResponse");
 
       negotiated = true;
 
       // Cancel timer
       timerTask.cancel ();
       timerTask = null;
-      
+
       establish ();
    }
-   
+
    public void onNegotiationReject (NegotiationReject obj)
    {
       if (verbosity > 0)
-	 log.info ("<= NegotiationReject: " + obj.getReason ());
-      
+         log.info ("<= NegotiationReject: " + obj.getReason ());
+
       // Cancel timer
       timerTask.cancel ();
       timerTask = null;
-      
+
       obs.onRejected (obj.getReason ());
    }
-   
-   public void onEstablishAck (EstablishAck obj) 
+
+   public void onEstablishAck (EstablishAck obj)
       throws IOException, XmitException
    {
       if (obj.getRequestTimestamp () != tsp)
-	 throw new XmitException ("Establish response does not match " +
-				  obj.getRequestTimestamp ());
+         throw new XmitException ("Establish response does not match " +
+                                  obj.getRequestTimestamp ());
 
       if (verbosity > 0)
-	 log.info ("<= EstablishAck");
+         log.info ("<= EstablishAck");
 
       if (obj.hasNextSeqNo () && obj.getNextSeqNo () != nextSeqNo)
       {
-	 System.err.println ("NextSeqNo=" + obj.getNextSeqNo ());
+         System.err.println ("NextSeqNo=" + obj.getNextSeqNo ());
       }
 
       // Cancel timer
       timerTask.cancel ();
       timerTask = null;
-      
+
       obs.onEstablished (this);
 
       hbtTask = new HeartbeatTimerTask (this);
 
       timer.schedule (hbtTask, keepAliveInterval, keepAliveInterval);
    }
-   
+
    public void onEstablishReject (EstablishReject obj)
    {
       if (verbosity > 0)
-	 log.info ("<= EstablishReject: " + obj.getReason ());
-      
+         log.info ("<= EstablishReject: " + obj.getReason ());
+
       // Cancel timer
       timerTask.cancel ();
       timerTask = null;
-      
+
       obs.onRejected (obj.getReason ());
    }
 
    public void onHeartbeat (Heartbeat obj)
    {
       if (verbosity > 0)
-	 log.info ("<= Heartbeat");
+         log.info ("<= Heartbeat");
    }
 
    public void onSequence (Sequence obj)
    {
       if (verbosity > 0)
-	 log.info ("<= Sequence");
+         log.info ("<= Sequence");
    }
 
    public void onRetransmission (Retransmission obj)
    {
       if (verbosity > 0)
-	 log.info ("<= Restransmission"); 
+         log.info ("<= Restransmission");
    }
- 
+
    public void onRetransmitRequest (RetransmitRequest obj)
    {
       if (verbosity > 0)
-	 log.info ("<= RetransmitRequest"); 
+         log.info ("<= RetransmitRequest");
    }
- 
+
    public void onTerminate (Terminate obj)
    {
       if (verbosity > 0)
-	 log.info ("<= Terminate"); 
+         log.info ("<= Terminate");
 
       hbtTask.cancel ();
       hbtTask = null;
@@ -405,21 +405,21 @@ public final class Session implements Runnable
    public void onFinishedSending (FinishedSending obj)
    {
       if (verbosity > 0)
-	 log.info ("<= FinishedSending"); 
+         log.info ("<= FinishedSending");
    }
 
    public void onAny (Object o)
    {
       if (verbosity > 0)
-	 log.info ("<= Any " + o.toString ());
-      
+         log.info ("<= Any " + o.toString ());
+
       try
       {
-	 appDispatcher.dispatch (o);
+         appDispatcher.dispatch (o);
       }
       catch (BlinkException e)
       {
-	 e.printStackTrace ();
+         e.printStackTrace ();
       }
    }
 
