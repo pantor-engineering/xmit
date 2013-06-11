@@ -105,9 +105,10 @@ public final class Session implements Runnable
       this.obs = obs;
       this.keepAliveInterval = keepAliveInterval;
       this.verbosity = verbosity;
-      negotiated = false;
-      nextSeqNo = 1;
-      timerTask = null;
+      this.negotiated = false;
+      this.nextSeqNo = 1;
+      this.timerTask = null;
+      this.lastMsgReceivedTsp = 0;
 
       try
       {
@@ -323,6 +324,8 @@ public final class Session implements Runnable
    {
       if (verbosity > 0)
          log.info ("<= Heartbeat");
+
+      lastMsgReceivedTsp = System.currentTimeMillis ();
    }
 
    public void onSequence (Sequence obj)
@@ -363,6 +366,8 @@ public final class Session implements Runnable
       if (verbosity > 0)
          log.info ("<= Any " + o.toString ());
 
+      lastMsgReceivedTsp = System.currentTimeMillis ();
+      
       try
       {
          appDispatcher.dispatch (o);
@@ -458,6 +463,30 @@ public final class Session implements Runnable
       }
    }
 
+   private void checkHeartbeat ()
+   {
+      if (verbosity > 0)
+         log.info ("Check heartbeat");
+
+      long since = System.currentTimeMillis () - lastMsgReceivedTsp;
+      if (since > 3 * keepAliveInterval)
+      {
+         log.severe ("Heartbeat timed out: " + since
+                     + "ms since last msg received");
+
+         try
+         {
+            terminate ("Heartbeat timeout");
+         }
+         catch (Exception e)
+         {
+            // ignored
+         }
+         
+         obs.onRejected ("Heartbeat timeout");
+      }
+   }
+
    private void sendHeartbeat ()
    {
       if (verbosity > 0)
@@ -518,6 +547,7 @@ public final class Session implements Runnable
       public void run ()
       {
          session.sendHeartbeat ();
+         session.checkHeartbeat ();
       }
 
       Session session;
@@ -531,6 +561,7 @@ public final class Session implements Runnable
    private Object credentials;
    private String sessionId;
    private long tsp;
+   private long lastMsgReceivedTsp;
    private int keepAliveInterval;
    private boolean negotiated;
    private long nextSeqNo;
