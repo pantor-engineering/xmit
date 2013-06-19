@@ -4,8 +4,8 @@ package xmit;
 
 public class Snapshot
 {
-  public java.lang.String getSessionId () { return m_SessionId; }
-  public void setSessionId (java.lang.String v) { m_SessionId = v; }
+  public byte [] getSessionId () { return m_SessionId; }
+  public void setSessionId (byte [] v) { m_SessionId = v; }
   public long getRequestTimestamp () { return m_RequestTimestamp; }
   public boolean hasRequestTimestamp () { return has_RequestTimestamp; }
   public void clearRequestTimestamp () { has_RequestTimestamp = false; }
@@ -27,7 +27,7 @@ public class Snapshot
   private boolean has_Segments;
   private boolean has_Segment;
   
-  private java.lang.String m_SessionId;
+  private byte [] m_SessionId;
   private long m_RequestTimestamp;
   private long m_SeqNo;
   private int m_Segments;

@@ -2,14 +2,14 @@
 
 package xmit;
 
-public class SnapshotRequest
+public class QueueProbe
 {
   public byte [] getSessionId () { return m_SessionId; }
   public void setSessionId (byte [] v) { m_SessionId = v; }
-  public long getTimestamp () { return m_Timestamp; }
-  public void setTimestamp (long v) { m_Timestamp = v; }
+  public long getKey () { return m_Key; }
+  public void setKey (long v) { m_Key = v; }
   
   private byte [] m_SessionId;
-  private long m_Timestamp;
+  private long m_Key;
 }
 

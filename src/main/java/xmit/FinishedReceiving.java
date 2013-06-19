@@ -4,9 +4,9 @@ package xmit;
 
 public class FinishedReceiving
 {
-  public java.lang.String getSessionId () { return m_SessionId; }
-  public void setSessionId (java.lang.String v) { m_SessionId = v; }
+  public byte [] getSessionId () { return m_SessionId; }
+  public void setSessionId (byte [] v) { m_SessionId = v; }
   
-  private java.lang.String m_SessionId;
+  private byte [] m_SessionId;
 }
 

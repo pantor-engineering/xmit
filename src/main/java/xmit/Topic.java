@@ -4,14 +4,14 @@ package xmit;
 
 public class Topic
 {
-  public java.lang.String getSessionId () { return m_SessionId; }
-  public void setSessionId (java.lang.String v) { m_SessionId = v; }
+  public byte [] getSessionId () { return m_SessionId; }
+  public void setSessionId (byte [] v) { m_SessionId = v; }
   public FlowType getFlow () { return m_Flow; }
   public void setFlow (FlowType v) { m_Flow = v; }
   public java.lang.Object getClassification () { return m_Classification; }
   public void setClassification (java.lang.Object v) { m_Classification = v; }
   
-  private java.lang.String m_SessionId;
+  private byte [] m_SessionId;
   private FlowType m_Flow;
   private java.lang.Object m_Classification;
 }

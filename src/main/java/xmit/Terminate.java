@@ -4,14 +4,14 @@ package xmit;
 
 public class Terminate
 {
-  public java.lang.String getSessionId () { return m_SessionId; }
-  public void setSessionId (java.lang.String v) { m_SessionId = v; }
+  public byte [] getSessionId () { return m_SessionId; }
+  public void setSessionId (byte [] v) { m_SessionId = v; }
   public java.lang.String getReason () { return m_Reason; }
   public boolean hasReason () { return m_Reason != null; }
   public void clearReason () { m_Reason = null; }
   public void setReason (java.lang.String v) { m_Reason = v; }
   
-  private java.lang.String m_SessionId;
+  private byte [] m_SessionId;
   private java.lang.String m_Reason;
 }
 

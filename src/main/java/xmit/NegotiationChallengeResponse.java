@@ -2,7 +2,7 @@
 
 package xmit;
 
-public class EstablishChallengeResponse
+public class NegotiationChallengeResponse
 {
   public byte [] getSessionId () { return m_SessionId; }
   public void setSessionId (byte [] v) { m_SessionId = v; }

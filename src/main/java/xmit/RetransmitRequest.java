@@ -4,14 +4,14 @@ package xmit;
 
 public class RetransmitRequest
 {
-  public java.lang.String getSessionId () { return m_SessionId; }
-  public void setSessionId (java.lang.String v) { m_SessionId = v; }
+  public byte [] getSessionId () { return m_SessionId; }
+  public void setSessionId (byte [] v) { m_SessionId = v; }
   public long getFromSeqNo () { return m_FromSeqNo; }
   public void setFromSeqNo (long v) { m_FromSeqNo = v; }
   public int getCount () { return m_Count; }
   public void setCount (int v) { m_Count = v; }
   
-  private java.lang.String m_SessionId;
+  private byte [] m_SessionId;
   private long m_FromSeqNo;
   private int m_Count;
 }

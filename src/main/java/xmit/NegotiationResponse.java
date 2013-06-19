@@ -6,13 +6,13 @@ public class NegotiationResponse
 {
   public long getRequestTimestamp () { return m_RequestTimestamp; }
   public void setRequestTimestamp (long v) { m_RequestTimestamp = v; }
-  public java.lang.String getSessionId () { return m_SessionId; }
-  public void setSessionId (java.lang.String v) { m_SessionId = v; }
+  public byte [] getSessionId () { return m_SessionId; }
+  public void setSessionId (byte [] v) { m_SessionId = v; }
   public FlowType getServerFlow () { return m_ServerFlow; }
   public void setServerFlow (FlowType v) { m_ServerFlow = v; }
   
   private long m_RequestTimestamp;
-  private java.lang.String m_SessionId;
+  private byte [] m_SessionId;
   private FlowType m_ServerFlow;
 }
 

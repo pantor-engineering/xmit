@@ -37,6 +37,8 @@ package com.pantor.xmit;
 
 import java.io.IOException;
 import java.net.DatagramSocket;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.UUID;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -384,7 +386,14 @@ public final class Session implements Runnable
 
    private void negotiate () throws IOException, XmitException
    {
-      sessionId = UUID.randomUUID ().toString ();
+      sessionId = new byte [16];
+
+      UUID uuid = UUID.randomUUID ();
+      ByteBuffer bb = ByteBuffer.wrap(sessionId);
+//      bb.order(ByteOrder.LITTLE_ENDIAN);
+      bb.putLong(uuid.getMostSignificantBits());
+      bb.putLong(uuid.getLeastSignificantBits());
+
       tsp = System.currentTimeMillis () * 1000000;
 
       Negotiate n = new Negotiate ();
@@ -559,7 +568,7 @@ public final class Session implements Runnable
    private final DefaultObsRegistry appRegistry;
    private final Dispatcher appDispatcher;
    private Object credentials;
-   private String sessionId;
+   private byte[] sessionId;
    private long tsp;
    private long lastMsgReceivedTsp;
    private int keepAliveInterval;

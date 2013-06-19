@@ -4,8 +4,8 @@ package xmit;
 
 public class EstablishAck
 {
-  public java.lang.String getSessionId () { return m_SessionId; }
-  public void setSessionId (java.lang.String v) { m_SessionId = v; }
+  public byte [] getSessionId () { return m_SessionId; }
+  public void setSessionId (byte [] v) { m_SessionId = v; }
   public long getRequestTimestamp () { return m_RequestTimestamp; }
   public void setRequestTimestamp (long v) { m_RequestTimestamp = v; }
   public long getTimestamp () { return m_Timestamp; }
@@ -19,7 +19,7 @@ public class EstablishAck
   
   private boolean has_NextSeqNo;
   
-  private java.lang.String m_SessionId;
+  private byte [] m_SessionId;
   private long m_RequestTimestamp;
   private long m_Timestamp;
   private long m_KeepaliveInterval;

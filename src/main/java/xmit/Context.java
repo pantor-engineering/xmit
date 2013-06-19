@@ -4,8 +4,8 @@ package xmit;
 
 public class Context
 {
-  public java.lang.String getSessionId () { return m_SessionId; }
-  public void setSessionId (java.lang.String v) { m_SessionId = v; }
+  public byte [] getSessionId () { return m_SessionId; }
+  public void setSessionId (byte [] v) { m_SessionId = v; }
   public long getNextSeqNo () { return m_NextSeqNo; }
   public boolean hasNextSeqNo () { return has_NextSeqNo; }
   public void clearNextSeqNo () { has_NextSeqNo = false; }
@@ -13,7 +13,7 @@ public class Context
   
   private boolean has_NextSeqNo;
   
-  private java.lang.String m_SessionId;
+  private byte [] m_SessionId;
   private long m_NextSeqNo;
 }
 

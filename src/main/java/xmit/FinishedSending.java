@@ -4,12 +4,12 @@ package xmit;
 
 public class FinishedSending
 {
-  public java.lang.String getSessionId () { return m_SessionId; }
-  public void setSessionId (java.lang.String v) { m_SessionId = v; }
+  public byte [] getSessionId () { return m_SessionId; }
+  public void setSessionId (byte [] v) { m_SessionId = v; }
   public long getLastSeqNo () { return m_LastSeqNo; }
   public void setLastSeqNo (long v) { m_LastSeqNo = v; }
   
-  private java.lang.String m_SessionId;
+  private byte [] m_SessionId;
   private long m_LastSeqNo;
 }
 
