@@ -39,6 +39,7 @@ import java.io.IOException;
 import java.net.DatagramSocket;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.lang.Math;
 import java.util.UUID;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -92,7 +93,8 @@ public final class Session implements Runnable
       @param socket a DatagramSocket
       @param schemas a vector of blink schemas
       @param obs a session event observer
-      @param keepAliveInterval the keep alive interval for the xmit session
+      @param keepAliveInterval the client side keep alive interval for
+             the xmit session
       @param verbosity the amount of logging (0=none)
       @throws XmitException if there is an Xmit problem
       @throws IOException if there is a socket problem
@@ -111,6 +113,8 @@ public final class Session implements Runnable
       this.nextSeqNo = 1;
       this.timerTask = null;
       this.lastMsgReceivedTsp = 0;
+      this.lastMsgSentTsp = 0;
+      this.serverKeepAliveInterval = 0;
 
       try
       {
@@ -212,6 +216,8 @@ public final class Session implements Runnable
       if (verbosity > 0)
          log.info ("=> Sending " + obj);
 
+      lastMsgSentTsp = System.currentTimeMillis ();
+      
       try
       {
          client.send (obj);
@@ -303,11 +309,14 @@ public final class Session implements Runnable
       timerTask.cancel ();
       timerTask = null;
 
+      serverKeepAliveInterval = (int) obj.getKeepaliveInterval ();
+
       obs.onEstablished (this);
 
       hbtTask = new HeartbeatTimerTask (this);
 
-      timer.schedule (hbtTask, keepAliveInterval, keepAliveInterval);
+      int interval = Math.min (keepAliveInterval, serverKeepAliveInterval);
+      timer.schedule (hbtTask, interval, interval);
    }
 
    public void onEstablishReject (EstablishReject obj)
@@ -478,7 +487,7 @@ public final class Session implements Runnable
          log.info ("Check heartbeat");
 
       long since = System.currentTimeMillis () - lastMsgReceivedTsp;
-      if (since > 3 * keepAliveInterval)
+      if (since > 3 * serverKeepAliveInterval)
       {
          log.severe ("Heartbeat timed out: " + since
                      + "ms since last msg received");
@@ -501,6 +510,10 @@ public final class Session implements Runnable
       if (verbosity > 0)
          log.info ("=> Heartbeat");
 
+      long since = System.currentTimeMillis () - lastMsgSentTsp;
+      if (since < keepAliveInterval)
+         return;
+      
       try
       {
          Heartbeat hbt = new Heartbeat ();
@@ -571,7 +584,9 @@ public final class Session implements Runnable
    private byte[] sessionId;
    private long tsp;
    private long lastMsgReceivedTsp;
+   private long lastMsgSentTsp;
    private int keepAliveInterval;
+   private int serverKeepAliveInterval;
    private boolean negotiated;
    private long nextSeqNo;
    private TimerTask timerTask;
