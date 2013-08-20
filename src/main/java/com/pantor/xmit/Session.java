@@ -109,7 +109,8 @@ public final class Session implements Runnable
       this.obs = obs;
       this.keepAliveInterval = keepAliveInterval;
       this.verbosity = verbosity;
-      this.negotiated = false;
+      this.negotiated = false; 
+      this.established = false;
       this.nextSeqNo = 1;
       this.timerTask = null;
       this.lastMsgReceivedTsp = 0;
@@ -185,14 +186,19 @@ public final class Session implements Runnable
       if (verbosity > 0)
          log.info ("=> Terminate");
 
-      hbtTask.cancel ();
-      hbtTask = null;
+      if (hbtTask != null)
+      {
+         hbtTask.cancel ();
+         hbtTask = null;
+      }
 
       Terminate t = new Terminate ();
       t.setSessionId (sessionId);
       if (! reason.isEmpty ())
          t.setReason (reason);
 
+      established = false;
+      
       try
       {
          client.send (t);
@@ -215,6 +221,9 @@ public final class Session implements Runnable
    {
       if (verbosity > 0)
          log.info ("=> Sending " + obj);
+
+      if (! established)
+         throw new XmitException ("Session not established");
 
       lastMsgSentTsp = System.currentTimeMillis ();
       
@@ -262,12 +271,23 @@ public final class Session implements Runnable
    public void onNegotiationResponse (NegotiationResponse obj)
       throws IOException, XmitException
    {
-      if (obj.getRequestTimestamp () != tsp)
-         throw new XmitException ("Negotiation response does not match " +
-                                  obj.getRequestTimestamp ());
-
       if (verbosity > 0)
          log.info ("<= NegotiationResponse");
+
+      if (obj.getRequestTimestamp () != tsp)
+      {
+         log.severe ("Negotiation response tsp does not match " +
+                     obj.getRequestTimestamp ());
+
+         // Cancel timer
+         if (timerTask != null)
+         {
+            timerTask.cancel ();
+            timerTask = null;
+         }
+         
+         return;
+      }
 
       negotiated = true;
 
@@ -291,14 +311,29 @@ public final class Session implements Runnable
    }
 
    public void onEstablishAck (EstablishAck obj)
-      throws IOException, XmitException
+      throws XmitException
    {
-      if (obj.getRequestTimestamp () != tsp)
-         throw new XmitException ("Establish response does not match " +
-                                  obj.getRequestTimestamp ());
-
       if (verbosity > 0)
-         log.info ("<= EstablishAck");
+         log.info ("<= EstablishAck (tsp " +
+                   obj.getRequestTimestamp () + ")");
+
+      if (obj.getRequestTimestamp () != tsp)
+      {
+         log.info ("Establish response tsp does not match " +
+                   obj.getRequestTimestamp ());
+
+         tsp = 0;
+         
+         try
+         {
+            terminate ("Establish mismatch");
+         }
+         catch (IOException e)
+         {
+         }
+         
+         return;
+      }
 
       if (obj.hasNextSeqNo () && obj.getNextSeqNo () != nextSeqNo)
       {
@@ -311,6 +346,8 @@ public final class Session implements Runnable
 
       serverKeepAliveInterval = (int) obj.getKeepaliveInterval ();
 
+      established = true;
+      
       obs.onEstablished (this);
 
       hbtTask = new HeartbeatTimerTask (this);
@@ -322,7 +359,20 @@ public final class Session implements Runnable
    public void onEstablishReject (EstablishReject obj)
    {
       if (verbosity > 0)
-         log.info ("<= EstablishReject: " + obj.getReason ());
+         log.info ("<= EstablishReject: " + obj.getReason () +
+                   " (tsp " + obj.getRequestTimestamp () + ")");
+
+      if (obj.getRequestTimestamp () != tsp)
+      {
+         tsp = 0;
+         
+         log.info ("Establish reject tsp does not match " +
+                   obj.getRequestTimestamp ());
+
+         return;
+      }
+
+      tsp = 0;
 
       // Cancel timer
       timerTask.cancel ();
@@ -427,10 +477,10 @@ public final class Session implements Runnable
 
    private void establish () throws IOException, XmitException
    {
-      if (verbosity > 0)
-         log.info ("=> Establish");
-
       tsp = System.currentTimeMillis () * 1000000;
+
+      if (verbosity > 0)
+         log.info ("=> Establish (tsp " + tsp + ")");
 
       Establish m = new Establish ();
 
@@ -588,6 +638,7 @@ public final class Session implements Runnable
    private int keepAliveInterval;
    private int serverKeepAliveInterval;
    private boolean negotiated;
+   private boolean established;
    private long nextSeqNo;
    private TimerTask timerTask;
    private TimerTask hbtTask;
