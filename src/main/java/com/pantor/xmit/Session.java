@@ -324,6 +324,10 @@ public final class Session implements Runnable
 
          tsp = 0;
          
+         // Apparently the session has been established by a previous
+         // establish request but not our latest one so terminate it
+         // and start over
+
          try
          {
             terminate ("Establish mismatch");
