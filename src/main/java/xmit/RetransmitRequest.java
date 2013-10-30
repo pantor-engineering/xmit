@@ -6,12 +6,15 @@ public class RetransmitRequest
 {
   public byte [] getSessionId () { return m_SessionId; }
   public void setSessionId (byte [] v) { m_SessionId = v; }
+  public long getTimestamp () { return m_Timestamp; }
+  public void setTimestamp (long v) { m_Timestamp = v; }
   public long getFromSeqNo () { return m_FromSeqNo; }
   public void setFromSeqNo (long v) { m_FromSeqNo = v; }
   public int getCount () { return m_Count; }
   public void setCount (int v) { m_Count = v; }
   
   private byte [] m_SessionId;
+  private long m_Timestamp;
   private long m_FromSeqNo;
   private int m_Count;
 }

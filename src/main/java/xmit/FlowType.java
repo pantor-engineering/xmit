@@ -4,7 +4,11 @@ package xmit;
 
 public enum FlowType
 {
-  Sequenced,
-  Unsequenced
+  Sequenced (0),
+  Unsequenced (1);
+  
+  private FlowType (int val) { this.val = val; }
+  public int getValue () { return val; }
+  private final int val;
 }
 

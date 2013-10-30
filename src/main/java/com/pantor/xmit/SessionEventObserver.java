@@ -53,10 +53,70 @@ public interface SessionEventObserver
    public void onEstablished (Session session);
 
    /**
-      Called when an xmit session is rejected
+      Called when an xmit session establishment is rejected
 
       @param reason reject reason
    */
    
-   public void onRejected (String reason);
+   public void onEstablishmentRejected (String reason);
+
+   /**
+      Called when an xmit session negotionation is rejected
+
+      @param reason reject reason
+   */
+   
+   public void onNegotiationRejected (String reason);
+
+   /**
+      Called if an xmit session establishment failes
+
+      @param cause the exception causing the failure
+   */
+   
+   public void onEstablishmentFailed (Throwable cause);
+
+   /**
+      Called if an xmit session negotionation fails
+
+      @param cause the exception causing the failure
+   */
+   
+   public void onNegotiationFailed (Throwable cause);
+
+   /**
+      Called when the session has been terminated
+
+      @param reason the reason for the termination
+      @param cause the exception that caused the termination. Can be
+      {@code null}
+    */
+
+   public void onTerminated (String reason, Throwable cause);
+
+   /**
+      Called when an operation sent by Session.sendOnce has been applied
+
+      @param token the token of the applied operation
+    */
+
+   public void onAppliedOnce (long token);
+
+   /**
+      Called when an operation sent by Session.sendOnce was rejected
+      for being out of order
+
+      @param token the token of the rejected operation
+    */
+
+   public void onOnceOutOfOrder (long token);
+   
+   /**
+      Called when an operation sent by Session.sendOnce had already
+      been applied
+
+      @param token the token of the already applied operation
+    */
+
+   public void onAlreadyAppliedOnce (long token);
 }

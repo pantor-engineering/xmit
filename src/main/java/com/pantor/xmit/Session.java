@@ -41,9 +41,11 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.lang.Math;
 import java.util.UUID;
+import java.util.ArrayDeque;
 import java.util.Timer;
+import java.util.Arrays;
 import java.util.TimerTask;
-import java.util.logging.Logger;
+import java.util.HashSet;
 
 import com.pantor.blink.DefaultObjectModel;
 import com.pantor.blink.Client;
@@ -51,22 +53,30 @@ import com.pantor.blink.Schema;
 import com.pantor.blink.DefaultObsRegistry;
 import com.pantor.blink.Dispatcher;
 import com.pantor.blink.BlinkException;
+import com.pantor.blink.Logger;
 
 import xmit.FlowType;
 import xmit.Negotiate;
 import xmit.NegotiationResponse;
 import xmit.NegotiationReject;
 import xmit.Establish;
-import xmit.EstablishAck;
-import xmit.EstablishReject;
+import xmit.EstablishmentAck;
+import xmit.EstablishmentReject;
 import xmit.Heartbeat;
 import xmit.Sequence;
+import xmit.Context;
+import xmit.PackedContext;
 import xmit.Terminate;
+import xmit.TerminationCode;
 import xmit.FinishedSending;
 import xmit.RetransmitRequest;
+import xmit.RetransmitRequestResponse;
 import xmit.Retransmission;
 
-import com.pantor.xmit.SessionEventObserver;
+import xmit_once.Operation;
+import xmit_once.Applied;
+import xmit_once.NotApplied;
+import xmit_once.NotAppliedReason;
 
 /**
    The {@code Session} class provides a basic Xmit UDP client session.
@@ -80,12 +90,14 @@ import com.pantor.xmit.SessionEventObserver;
 
    <p>The session is thread based and can either be started through the
    {@code start} method that will spawn a new thread, or it can be
-   integrated more flexible with custom created threads through {@code
-   Runnable} the interface.</p>
+   integrated more flexible with custom created threads through the {@code
+   Runnable} interface.</p>
  */
 
 public final class Session implements Runnable
 {
+   private final static int CompactArrayLen = 8;
+   
    /**
       Creates a session that will use the specified socket. 
       It will map messages as defined by the specified schemas.
@@ -95,7 +107,6 @@ public final class Session implements Runnable
       @param obs a session event observer
       @param keepAliveInterval the client side keep alive interval for
              the xmit session
-      @param verbosity the amount of logging (0=none)
       @throws XmitException if there is an Xmit problem
       @throws IOException if there is a socket problem
     */
@@ -103,19 +114,28 @@ public final class Session implements Runnable
    public Session (DatagramSocket socket,
                    String [] schemas,
                    SessionEventObserver obs,
-                   int keepAliveInterval,
-                   int verbosity) throws IOException, XmitException
+                   int keepAliveInterval) throws IOException, XmitException
    {
       this.obs = obs;
       this.keepAliveInterval = keepAliveInterval;
-      this.verbosity = verbosity;
-      this.negotiated = false; 
-      this.established = false;
-      this.nextSeqNo = 1;
-      this.timerTask = null;
-      this.lastMsgReceivedTsp = 0;
-      this.lastMsgSentTsp = 0;
-      this.serverKeepAliveInterval = 0;
+      this.nextActualIncomingSeqNo = 1;
+      this.nextExpectedIncomingSeqNo = 1;
+      this.queue = new ArrayDeque<Pending> ();
+      this.onceOp = new Operation ();
+      this.oncePair = new Object [2];
+      this.pendNegReqs = new HashSet<Long> ();
+      this.pendEstReqs = new HashSet<Long> ();
+      this.pendRetReqs = new HashSet<Long> ();
+      this.sessionId = UUID.randomUUID ();
+      this.sessionIdBytes = new byte [16];
+      
+      ByteBuffer bb = ByteBuffer.wrap (sessionIdBytes);
+      bb.putLong (sessionId.getMostSignificantBits ());
+      bb.putLong (sessionId.getLeastSignificantBits ());
+      this.compactSessionIdBytes =
+         Arrays.copyOfRange (sessionIdBytes, 0, CompactArrayLen);
+      
+      oncePair [0] = onceOp;
 
       try
       {
@@ -124,11 +144,12 @@ public final class Session implements Runnable
          client.addObserver (this);
 
          appRegistry = new DefaultObsRegistry (om);
+         appRegistry.addObserver (new OnceObs ());
          appDispatcher = new Dispatcher (om, appRegistry);
       }
       catch (BlinkException e)
       {
-         throw new XmitException ("BlinkException: " + e.getMessage ());
+         throw new XmitException (e);
       }
    }
 
@@ -148,22 +169,22 @@ public final class Session implements Runnable
       }
       catch (BlinkException e)
       {
-         throw new XmitException ("BlinkException: " + e.getMessage ());
+         throw new XmitException (e);
       }
    }
 
    /**
-      Initiate an xmit session using optional credentials
+      Initiate an xmit session using optional credentials. Any failure
+      to initiate will be reported as failed negotiation or establishment
+      through the {@code SessionEventObserver}
 
-      @param credentials optional credentials to use when initiating
-      @throws XmitException if there is a schema or binding problem
-      @throws IOException if there is a socket problem
+      @param credentials credentials to use when initiating. Use
+      {@code null} to indicate absence of credentials.
    */
    
-   public void initiate (Object credentials) throws IOException, XmitException
+   public void initiate (Object credentials)
    {
-      if (verbosity > 0)
-         log.info ("=> Initiate");
+      log.trace ("=> Initiate");
 
       this.credentials = credentials;
 
@@ -174,74 +195,235 @@ public final class Session implements Runnable
    }
 
    /**
+      Initiate an xmit session. Any failure to initiate will be
+      reported as failed negotiation or establishment through the
+      {@code SessionEventObserver}
+   */
+   
+   public void initiate ()
+   {
+      initiate (null);
+   }
+   
+   /**
       Terminate an xmit session
 
       @param reason the reason for terminating
-      @throws XmitException if there is a schema or binding problem
-      @throws IOException if there is a socket problem
    */
-   
-   public void terminate (String reason) throws IOException, XmitException
+
+   public void terminate (String reason)
    {
-      if (verbosity > 0)
-         log.info ("=> Terminate");
-
-      if (hbtTask != null)
-      {
-         hbtTask.cancel ();
-         hbtTask = null;
-      }
-
-      Terminate t = new Terminate ();
-      t.setSessionId (sessionId);
-      if (! reason.isEmpty ())
-         t.setReason (reason);
-
-      established = false;
-      
-      try
-      {
-         client.send (t);
-      }
-      catch (BlinkException e)
-      {
-         throw new XmitException ("BlinkException: " + e.getMessage ());
-      }
+      innerTerminate (reason, reason, null, TerminationCode.Finished);
    }
 
    /**
-      Send a message
+      Resets the session. If the session is already established, it
+      will be terminated.  If there are any ongoing negotiation or
+      establishment attempts, they will be aborted. It will however
+      retain any already achieved negotiation state.
+   */
+   
+   public void reset ()
+   {
+      if (established)
+         terminate ("reset");
+      else
+         cancelTimer ();
+   }
+   
+   /**
+      Sends an application message
 
-      @param obj message to send
+      @param msg message to send
       @throws XmitException if there is a schema or binding problem
       @throws IOException if there is a socket problem
    */
    
-   public void send (Object obj) throws IOException, XmitException
+   public void send (Object msg) throws IOException, XmitException
    {
-      if (verbosity > 0)
-         log.info ("=> Sending " + obj);
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("=> Sending " + msg);
 
       if (! established)
          throw new XmitException ("Session not established");
 
-      lastMsgSentTsp = System.currentTimeMillis ();
-      
       try
       {
-         client.send (obj);
+         innerSend (msg);
       }
       catch (BlinkException e)
       {
-         e.printStackTrace ();
-         throw new XmitException ("BlinkException: " + e.getMessage ());
+         onFailedToSendAppMsg (msg, e);
+         throw new XmitException (e);
+      }
+      catch (IOException e)
+      {
+         onFailedToSendAppMsg (msg, e);
+         throw e;
       }
    }
 
    /**
-      Runs the session
+      Sends an application message using XmitOnce
+
+      @param msg message to send
+
+      @return the XmitOnce token assigned to the message
+      
+      @throws XmitException if there is a schema or binding problem
+      @throws IOException if there is a socket problem
+   */
+   
+   public long sendOnce (Object msg) throws IOException, XmitException
+   {
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("=> Sending " + msg);
+
+      if (! established)
+         throw new XmitException ("Session not established");
+
+      try
+      {
+         return innerSendOnce (msg);
+      }
+      catch (BlinkException e)
+      {
+         onFailedToSendAppMsg (msg, e);
+         throw new XmitException (e);
+      }
+      catch (IOException e)
+      {
+         onFailedToSendAppMsg (msg, e);
+         throw e;
+      }
+   }
+
+   /**
+      Sends an application message using XmitOnce
+
+      @param msg message to send
+      @param token XmitOnce token to use, must be larger than any previously
+      used tokens on this session
+
+      @throws XmitException if there is a schema or binding problem
+      @throws IOException if there is a socket problem
+   */
+   
+   public void sendOnce (Object msg, long token)
+      throws IOException, XmitException
+   {
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("=> Sending " + msg);
+
+      if (! established)
+         throw new XmitException ("Session not established");
+
+      try
+      {
+         innerSendOnce (msg, token);
+      }
+      catch (XmitException e)
+      {
+         onFailedToSendAppMsg (msg, e);
+         throw e;
+      }
+      catch (BlinkException e)
+      {
+         onFailedToSendAppMsg (msg, e);
+         throw new XmitException (e);
+      }
+      catch (IOException e)
+      {
+         onFailedToSendAppMsg (msg, e);
+         throw e;
+      }
+   }
+
+   /**
+      Sends an array of messages
+
+      @param msgs messages to send
+      @throws XmitException if there is a schema or binding problem
+      @throws IOException if there is a socket problem
+   */
+
+   public void send (Object [] msgs) throws IOException, XmitException
+   {
+      send (msgs, 0, msgs.length);
+   }
+
+   /**
+      Sends a slice of an array of messages
+
+      @param msgs messages to send
+      @param from the index of the first message to send
+      @param len the number of objects to send
+      @throws XmitException if there is a schema or binding problem
+      @throws IOException if there is a socket problem
+   */
+
+   public void send (Object [] msgs, int from, int len)
+      throws IOException, XmitException
+   {
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("=> Sending " + msgs.length + " messages");
+
+      if (! established)
+         throw new XmitException ("Session not established");
+
+      try
+      {
+         innerSend (msgs, from, len);
+      }
+      catch (BlinkException e)
+      {
+         onFailedToSendAppMsg (null, e);
+         throw new XmitException (e);
+      }
+      catch (IOException e)
+      {
+         onFailedToSendAppMsg (null, e);
+         throw e;
+      }
+   }
+
+   public void send (Iterable<?> msgs) throws IOException, XmitException
+   {
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("=> Sending messages");
+
+      if (! established)
+         throw new XmitException ("Session not established");
+
+      try
+      {
+         innerSend (msgs);
+      }
+      catch (BlinkException e)
+      {
+         onFailedToSendAppMsg (null, e);
+         throw new XmitException (e);
+      }
+      catch (IOException e)
+      {
+         onFailedToSendAppMsg (null, e);
+         throw e;
+      }
+   }
+
+   /**
+      Returns the identifier of this session
+
+      @return a uinque identifier of this session
     */
    
+   public UUID getSessionId ()
+   {
+      return sessionId;
+   }
+   
+   /** Runs the session */
+
    public void run ()
    {
       try
@@ -250,10 +432,7 @@ public final class Session implements Runnable
       }
       catch (Throwable e)
       {
-         e.printStackTrace ();
-         while (e.getCause () != null)
-            e = e.getCause ();
-         log.severe (e.toString ());
+         log.error (getInnerCause (e), e);
       }
    }
 
@@ -269,385 +448,833 @@ public final class Session implements Runnable
    //
 
    public void onNegotiationResponse (NegotiationResponse obj)
-      throws IOException, XmitException
    {
-      if (verbosity > 0)
-         log.info ("<= NegotiationResponse");
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("<= NegotiationResponse (snId: " +
+                    sessionId + ", tsp: " + obj.getRequestTimestamp () + ")");
 
-      if (obj.getRequestTimestamp () != tsp)
+      if (! negotiated)
       {
-         log.severe ("Negotiation response tsp does not match " +
-                     obj.getRequestTimestamp ());
-
-         // Cancel timer
-         if (timerTask != null)
+         if (isValid (obj))
          {
-            timerTask.cancel ();
-            timerTask = null;
+            receivedMsg ();
+            negotiated = true;
+            cancelTimer ();
+            isSeqSrv = obj.getServerFlow () == FlowType.Sequenced;
+            establish ();
          }
-         
-         return;
       }
-
-      negotiated = true;
-
-      // Cancel timer
-      timerTask.cancel ();
-      timerTask = null;
-
-      establish ();
+      else
+      {
+         if (isThisSession (obj.getSessionId ()))
+            log.warn ("Ignoring negotiation response since " +
+                      "already negotiated: " +
+                      "resp tsp=" + obj.getRequestTimestamp ());
+      }
    }
 
    public void onNegotiationReject (NegotiationReject obj)
    {
-      if (verbosity > 0)
-         log.info ("<= NegotiationReject: " + obj.getReason ());
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("<= NegotiationReject (snId: " +
+                    sessionId + ", tsp: " + obj.getRequestTimestamp () + ")");
 
-      // Cancel timer
-      timerTask.cancel ();
-      timerTask = null;
-
-      obs.onRejected (obj.getReason ());
+      if (! negotiated && isValid (obj))
+      {
+         receivedMsg ();
+         cancelTimer ();
+         obs.onNegotiationRejected (getReason (obj));
+      }
    }
 
-   public void onEstablishAck (EstablishAck obj)
+   public void onEstablishmentAck (EstablishmentAck obj)
       throws XmitException
    {
-      if (verbosity > 0)
-         log.info ("<= EstablishAck (tsp " +
-                   obj.getRequestTimestamp () + ")");
-
-      if (obj.getRequestTimestamp () != tsp)
+      if (! established)
       {
-         log.info ("Establish response tsp does not match " +
-                   obj.getRequestTimestamp ());
+         if (log.isActiveAtLevel (Logger.Level.Trace))
+            log.trace ("<= EstablishmentAck (snId: " +
+                       sessionId + ", tsp: " +
+                       obj.getRequestTimestamp () + ")");
 
-         tsp = 0;
-         
-         // Apparently the session has been established by a previous
-         // establish request but not our latest one so terminate it
-         // and start over
+         if (isValid (obj))            
+         {
+            receivedMsg ();
+            established = true;
+            pendTerm = false;
+            cancelTimer ();
 
-         try
-         {
-            terminate ("Establish mismatch");
+            serverKeepAliveInterval = (int)obj.getKeepaliveInterval ();
+
+            int interval =
+               Math.min (keepAliveInterval, serverKeepAliveInterval * 3);
+               
+            resetInterval (interval / 8, new TimerTask () {
+                  public void run () { onHbtTimer (); }
+               });
+
+            obs.onEstablished (this);
+
+            if (obj.hasNextSeqNo ())
+               startFrame (obj.getNextSeqNo (),
+                           "Xmit:EstablishmentAck.NextSeqNo");
          }
-         catch (IOException e)
-         {
-         }
-         
-         return;
       }
-
-      if (obj.hasNextSeqNo () && obj.getNextSeqNo () != nextSeqNo)
+      else
       {
-         System.err.println ("NextSeqNo=" + obj.getNextSeqNo ());
+         if (isThisSession (obj.getSessionId ()))
+            log.warn ("Ignoring establishment ack since already established: " +
+                      "ack tsp=" + obj.getRequestTimestamp ());
       }
-
-      // Cancel timer
-      timerTask.cancel ();
-      timerTask = null;
-
-      serverKeepAliveInterval = (int) obj.getKeepaliveInterval ();
-
-      established = true;
-      
-      obs.onEstablished (this);
-
-      hbtTask = new HeartbeatTimerTask (this);
-
-      int interval = Math.min (keepAliveInterval, serverKeepAliveInterval);
-      timer.schedule (hbtTask, interval, interval);
    }
 
-   public void onEstablishReject (EstablishReject obj)
+   public void onEstablishmentReject (EstablishmentReject obj)
    {
-      if (verbosity > 0)
-         log.info ("<= EstablishReject: " + obj.getReason () +
-                   " (tsp " + obj.getRequestTimestamp () + ")");
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("<= EstablishmentReject (snId: " +
+                    sessionId + ", tsp: " + obj.getRequestTimestamp () + ")");
 
-      if (obj.getRequestTimestamp () != tsp)
+      if (! established && isValid (obj))
       {
-         tsp = 0;
-         
-         log.info ("Establish reject tsp does not match " +
-                   obj.getRequestTimestamp ());
-
-         return;
+         receivedMsg ();
+         cancelTimer ();
+         obs.onEstablishmentRejected (getReason (obj));
       }
-
-      tsp = 0;
-
-      // Cancel timer
-      timerTask.cancel ();
-      timerTask = null;
-
-      obs.onRejected (obj.getReason ());
    }
 
    public void onHeartbeat (Heartbeat obj)
    {
-      if (verbosity > 0)
-         log.info ("<= Heartbeat");
-
-      lastMsgReceivedTsp = System.currentTimeMillis ();
+      log.trace ("<= Heartbeat");
+      if (isEstablished (obj))
+      {
+         receivedMsg ();
+         isRetransmit = false;
+         if (obj.hasNextSeqNo ())
+            startFrame (obj.getNextSeqNo (), "Xmit:Heartbeat.NextSeqNo");
+      }
    }
 
    public void onSequence (Sequence obj)
    {
-      if (verbosity > 0)
-         log.info ("<= Sequence");
+      log.trace ("<= Sequence");
+      if (isEstablished (obj))
+      {
+         receivedMsg ();
+         isRetransmit = false;
+         startFrame (obj.getNextSeqNo (), "Xmit:Sequence");
+      }
+   }
+
+   public void onContext (Context obj)
+   {
+      if (isThisSession (obj.getSessionId ()))
+      {
+         if (isEstablished (obj))
+         {
+            receivedMsg ();
+            isRetransmit = false;
+            if (obj.hasNextSeqNo ())
+               startFrame (obj.getNextSeqNo (), "Xmit:Context.NextSeqNo");
+         }
+      }
+      else
+         innerTerminate ("Xmit:Context: Session multiplexing not supported",
+                         null, TerminationCode.UnspecifiedError);
+   }
+
+   public void onPackedContext (PackedContext obj)
+   {
+      if (isThisSessionCompact (obj.getSessionIdPrefix ()))
+      {
+         if (isEstablished (obj))
+         {
+            receivedMsg ();
+            isRetransmit = false;
+            if (obj.hasNextSeqNo ())
+               startFrame ((long)obj.getNextSeqNo (),
+                           "Xmit:PackedContext.NextSeqNo");
+         }
+      }
+      else
+         innerTerminate ("Xmit:PackedContext: Session multiplexing not " +
+                         "supported", null, TerminationCode.UnspecifiedError);
    }
 
    public void onRetransmission (Retransmission obj)
    {
-      if (verbosity > 0)
-         log.info ("<= Restransmission");
+      log.trace ("<= Restransmission");
+      if (isEstablished (obj))
+      {
+         receivedMsg ();
+         isRetransmit = true;
+         startFrame (obj.getNextSeqNo (), "Xmit:Retransmission");
+      }
    }
 
    public void onRetransmitRequest (RetransmitRequest obj)
    {
-      if (verbosity > 0)
-         log.info ("<= RetransmitRequest");
+      log.trace ("<= RetransmitRequest");
+      if (isThisSession (obj.getSessionId ()) && isEstablished (obj))
+         innerTerminate ("Xmit:RetransmitRequest not allowed in " +
+                         "an unsequenced context", null,
+                         TerminationCode.ReRequestOutOfBounds);
+   }
+
+   public void onRetransmitRequestResponse (RetransmitRequestResponse obj)
+   {
+      log.trace ("<= RetransmitRequestResponse");
+      if (isValid (obj) && isEstablished (obj))
+      {
+         long end = obj.getFromSeqNo () + obj.getCount ();
+         if (end >= requestedRetransmitEnd)
+            reRequestRetransmitAt = 0;
+         else
+            reRequestRetransmitAt = end;
+      }
    }
 
    public void onTerminate (Terminate obj)
    {
-      if (verbosity > 0)
-         log.info ("<= Terminate");
+      log.trace ("<= Terminate");
+      if (isThisSession (obj.getSessionId ()) && isEstablished (obj))
+      {
+         String logReason;
+         if (obj.hasReason () && ! obj.getReason ().isEmpty ())
+            logReason = obj.getReason ();
+         else
+            logReason = "Terminated by peer: " + obj.getCode ();
 
-      hbtTask.cancel ();
-      hbtTask = null;
+         innerTerminate (logReason, "goodbye", null, TerminationCode.Finished);
+      }
    }
 
    public void onFinishedSending (FinishedSending obj)
    {
-      if (verbosity > 0)
-         log.info ("<= FinishedSending");
+      log.trace ("<= FinishedSending");
+      if (isThisSession (obj.getSessionId ()) && isEstablished (obj))
+      {
+         isRetransmit = false;
+         pendTerm = true;
+         if (startFrame (obj.getLastSeqNo () + 1, "Xmit:FinishedSending"))
+            flushPendTerm ();
+      }
    }
 
    public void onAny (Object o)
    {
-      if (verbosity > 0)
-         log.info ("<= Any " + o.toString ());
+      if (isEstablished (o))
+      {
+         if (log.isActiveAtLevel (Logger.Level.Trace))
+            log.trace ("<= Any " + o.toString ());
 
-      lastMsgReceivedTsp = System.currentTimeMillis ();
+         receivedMsg ();
+
+         if (isSeqSrv)
+            onSequencedMsg (o);
+         else
+            dispatchMsg (o);
+      }
+   }
+
+   private void onFailedToSendAppMsg (Object msg, Throwable e)
+   {
+      if (msg != null)
+         innerTerminate ("Failed to send application message: " +
+                         msg.getClass ().getName (), e,
+                         TerminationCode.UnspecifiedError);
+      else
+         innerTerminate ("Failed to send an application message", e,
+                         TerminationCode.UnspecifiedError);
+   }
+   
+   private static class Pending
+   {
+      Pending (long seqNo, Object msg)
+      {
+         this.seqNo = seqNo;
+         this.msg = msg;
+      }
+
+      long seqNo;
+      Object msg;
+   }
+
+   private class OnceObs
+   {
+      public void onApplied (Applied msg)
+      {
+         obs.onAppliedOnce (msg.getToken ());
+      }
+
+      public void onNotApplied (NotApplied msg)
+      {
+         if (msg.getReason () == NotAppliedReason.AlreadyApplied)
+            obs.onAlreadyAppliedOnce (msg.getToken ());
+         else
+            obs.onOnceOutOfOrder (msg.getToken ());
+      }
+   }
+
+   private boolean startFrame (long nextSeqNo, String what)
+   {
+      if (isSeqSrv)
+      {
+         nextActualIncomingSeqNo = nextSeqNo;
+         if (nextActualIncomingSeqNo != nextExpectedIncomingSeqNo &&
+            ! isRetransmit)
+         {
+            if (nextActualIncomingSeqNo > nextExpectedIncomingSeqNo)
+            {
+               recover (nextActualIncomingSeqNo);
+               return false;
+            }
+            else
+               log.warn (String.format (
+                            what + " comes in too low: seqno %s < %s",
+                            nextSeqNo, nextExpectedIncomingSeqNo));
+         }
+      }
+      else
+         log.warn ("Received " + what + " for an unsequenced server flow");
+
+      return true;
+   }
+   
+   private void receivedMsg ()
+   {
+      lastMsgReceivedTsp = now ();
+   }
+   
+   private void sentMsg ()
+   {
+      lastMsgSentTsp = now ();
+   }
+   
+   private void onSequencedMsg (Object msg)
+   {
+      long actualSn = nextActualIncomingSeqNo ++;
+      if (actualSn == nextExpectedIncomingSeqNo)
+      {
+         ++ nextExpectedIncomingSeqNo;
+         dispatchMsg (msg);
+
+         if (firstSeqNoInQueue != 0 &&
+             nextExpectedIncomingSeqNo >= firstSeqNoInQueue)
+            flushQueue ();
+         else
+         {
+            if (nextExpectedIncomingSeqNo == requestedRetransmitEnd)
+               flushPendTerm ();
+         }
+
+         if (nextExpectedIncomingSeqNo == reRequestRetransmitAt)
+            requestRetransmit ();
+      }
+      else
+         onOutOfSequenceMsg (actualSn, msg);
+   }
+
+   private void onOutOfSequenceMsg (long actualSn, Object msg)
+   {
+      if (actualSn > nextExpectedIncomingSeqNo)
+      {
+         if (! isRetransmit)
+            synchronized (queue)
+            {
+               if (queue.isEmpty ())
+                  firstSeqNoInQueue = actualSn;
+               queue.add (new Pending (actualSn, msg));
+            }
+      }
+      else
+         log.warn (String.format (
+                      "Ignoring already seen message %s with seqno %s, " +
+                      "next expected seqno is %s", msg.getClass ().getName (),
+                      actualSn, nextExpectedIncomingSeqNo));
+   }
+   
+   private void dispatchMsg (Object msg)
+   {
+      try
+      {
+         appDispatcher.dispatch (msg);
+      }
+      catch (BlinkException e)
+      {
+         log.warn (getInnerCause (e), e);
+      }
+   }
+
+   private void recover (long to)
+   {
+      if (firstSeqNoInQueue != 0 && firstSeqNoInQueue < to)
+         requestedRetransmitEnd = firstSeqNoInQueue;
+      else
+         requestedRetransmitEnd = to;
+
+      log.info (String.format ("Inbound sequence gap detected: " +
+                               "expected %s but got %s",
+                               nextExpectedIncomingSeqNo, to));
+
+      requestRetransmit ();
+   }
+   
+   private void requestRetransmit ()
+   {
+      long tsp = nowNano ();
+      synchronized (pendRetReqs)
+      {
+         pendRetReqs.add (tsp);
+      }
+
+      RetransmitRequest rr = new RetransmitRequest ();
+      rr.setSessionId (sessionIdBytes);
+      rr.setTimestamp (tsp);
+      rr.setFromSeqNo (nextExpectedIncomingSeqNo);
+      rr.setCount ((int) (requestedRetransmitEnd - nextExpectedIncomingSeqNo));
+
+      reRequestRetransmitAt = 0;
       
       try
       {
-         appDispatcher.dispatch (o);
-      }
-      catch (BlinkException e)
-      {
-         e.printStackTrace ();
-      }
-   }
-
-   //
-   // Private
-   //
-
-   private void negotiate () throws IOException, XmitException
-   {
-      sessionId = new byte [16];
-
-      UUID uuid = UUID.randomUUID ();
-      ByteBuffer bb = ByteBuffer.wrap(sessionId);
-//      bb.order(ByteOrder.LITTLE_ENDIAN);
-      bb.putLong(uuid.getMostSignificantBits());
-      bb.putLong(uuid.getLeastSignificantBits());
-
-      tsp = System.currentTimeMillis () * 1000000;
-
-      Negotiate n = new Negotiate ();
-      n.setSessionId (sessionId);
-      n.setTimestamp (tsp);
-      n.setClientFlow (FlowType.Unsequenced);
-      n.setCredentials (credentials);
-
-      try
-      {
-         client.send (n);
-      }
-      catch (BlinkException e)
-      {
-         throw new XmitException ("BlinkException: " + e.getMessage ());
-      }
-
-      timerTask = new Session.NegotiateTimerTask (this);
-
-      timer.schedule (timerTask, 2000);
-   }
-
-   private void establish () throws IOException, XmitException
-   {
-      tsp = System.currentTimeMillis () * 1000000;
-
-      if (verbosity > 0)
-         log.info ("=> Establish (tsp " + tsp + ")");
-
-      Establish m = new Establish ();
-
-      m.setTimestamp (tsp);
-      m.setSessionId (sessionId);
-      m.setKeepaliveInterval (keepAliveInterval);
-      m.setCredentials (credentials);
-
-      try
-      {
-         client.send (m);
-      }
-      catch (BlinkException e)
-      {
-         throw new XmitException ("BlinkException: " + e.getMessage ());
-      }
-
-      timerTask = new Session.EstablishTimerTask (this);
-
-      timer.schedule (timerTask, 2000);
-   }
-
-   private void onNegotiateTimedOut ()
-   {
-      try
-      {
-         log.severe ("No negotiation response, retrying");
-
-         negotiate ();
+         innerSend (rr);
       }
       catch (Exception e)
       {
-         obs.onRejected (e.getMessage ());
+         innerTerminate ("Failed to send retransmit request", e,
+                         TerminationCode.UnspecifiedError);
       }
    }
 
-   private void onEstablishTimedOut ()
+   private void flushQueue ()
    {
-      try
-      {
-         log.severe ("No establish response, retrying");
+      int dequeued = 0;
 
-         establish ();
-      }
-      catch (Exception e)
+      synchronized (queue)
       {
-         obs.onRejected (e.getMessage ());
+         while (! queue.isEmpty ())
+         {
+            Pending pend = queue.peek ();
+            if (pend.seqNo == nextExpectedIncomingSeqNo)
+            {
+               ++ nextExpectedIncomingSeqNo;
+               ++ dequeued;
+               dispatchMsg (pend.msg);
+               queue.pop ();
+            }
+            else if (pend.seqNo < nextExpectedIncomingSeqNo)
+               queue.pop ();
+            else
+               break;
+         }
+
+         if (! queue.isEmpty ())
+            firstSeqNoInQueue = queue.peek ().seqNo;
+         else
+         {
+            firstSeqNoInQueue = 0;
+            flushPendTerm ();
+         }
       }
+      
+      if (dequeued > 0 && log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("dequeued " + dequeued + " after retransmit complete");
    }
 
-   private void checkHeartbeat ()
+   private void flushPendTerm ()
    {
-      if (verbosity > 0)
-         log.info ("Check heartbeat");
-
-      long since = System.currentTimeMillis () - lastMsgReceivedTsp;
-      if (since > 3 * serverKeepAliveInterval)
+      if (pendTerm)
       {
-         log.severe ("Heartbeat timed out: " + since
-                     + "ms since last msg received");
-
+         pendTerm = false;
+         innerTerminate ("peer finished sending", "finished receiving", null,
+                         TerminationCode.Finished);            
+      }
+   }
+   
+   private void innerTerminate (String logReason, String sendReason,
+                                Throwable cause, TerminationCode code)
+   {
+      log.trace ("=> Terminate");
+      if (established)
+      {
          try
          {
-            terminate ("Heartbeat timeout");
+            established = false;
+            cancelTimer ();
+
+            Terminate t = new Terminate ();
+            t.setSessionId (sessionIdBytes);
+            t.setCode (code);
+            if (sendReason != null && ! sendReason.isEmpty ())
+               t.setReason (sendReason);
+
+            try
+            {
+               innerSend (t);
+            }
+            catch (Exception e)
+            {
+               log.warn ("Graceful termination failed", e);
+            }
+         }
+         finally
+         {
+            obs.onTerminated (logReason != null ? logReason : "terminated",
+                              cause);
+         }
+      }
+      else
+         log.trace ("Terminating not established session");
+   }
+
+   private void innerTerminate (String reason, Throwable cause,
+                                TerminationCode code)
+   {
+      innerTerminate (reason, reason, cause, code);
+   }
+
+   private synchronized long innerSendOnce (Object msg)
+      throws IOException, BlinkException
+   {
+      sentMsg ();
+      long token = nextOnceToken ++;
+      onceOp.setToken (token);
+      oncePair [1] = msg;
+      client.send (oncePair);
+      oncePair [1] = null;
+      return token;
+   }
+
+   private synchronized void innerSendOnce (Object msg, long token)
+      throws IOException, BlinkException, XmitException
+   {
+      if (token >= nextOnceToken)
+         nextOnceToken = token + 1;
+      else
+         throw new XmitException (
+            "XmitOnce token too low: " + token + " < " + nextOnceToken);
+
+      sentMsg ();
+      onceOp.setToken (token);
+      oncePair [1] = msg;
+      client.send (oncePair);
+      oncePair [1] = null;
+   }
+
+   private synchronized void innerSend (Object msg)
+      throws IOException, BlinkException
+   {
+      sentMsg ();
+      client.send (msg);
+   }
+   
+   private synchronized void innerSend (Iterable<?> msgs)
+      throws IOException, BlinkException
+   {
+      sentMsg ();
+      client.send (msgs);
+   }
+   
+   private synchronized void innerSend (Object [] msgs, int from, int len)
+      throws IOException, BlinkException
+   {
+      sentMsg ();
+      client.send (msgs, from, len);
+   }
+   
+   private boolean isValid (EstablishmentAck obj)
+   {
+      return isValid (obj.getSessionId (), obj.getRequestTimestamp (),
+                      pendEstReqs, "Establishment ack");
+   }
+
+   private boolean isValid (EstablishmentReject obj)
+   {
+      return isValid (obj.getSessionId (), obj.getRequestTimestamp (),
+                      pendEstReqs, "Establishment reject");
+   }
+
+   private boolean isValid (NegotiationResponse obj)
+   {
+      return isValid (obj.getSessionId (), obj.getRequestTimestamp (),
+                      pendNegReqs, "Negotiation response");
+   }
+
+   private boolean isValid (NegotiationReject obj)
+   {
+      return isValid (obj.getSessionId (), obj.getRequestTimestamp (),
+                      pendNegReqs, "Negotiation reject");
+   }
+
+   private boolean isValid (RetransmitRequestResponse obj)
+   {
+      return isValid (obj.getSessionId (), obj.getRequestTimestamp (),
+                      pendRetReqs, "Retransmit request response");
+   }
+
+   private boolean isValid (byte [] snId, long reqTsp,
+                            HashSet<Long> pendReqs, String what)
+   {
+      if (isThisSession (snId))
+      {
+         synchronized (pendReqs)
+         {
+            if (pendReqs.remove (reqTsp))
+               return true;
+            else
+               log.warn (String.format ("Unknown %s tsp: %s", what, reqTsp));
+         }
+      }
+      else
+         log.warn (
+            String.format ("%s session id mismatch: expected: %s != actual: %s",
+                           what, sessionId, toUuid (snId)));
+      
+      return false;
+   }
+
+   private static String getReason (EstablishmentReject obj)
+   {
+      if (obj.hasReason () && ! obj.getReason ().isEmpty ())
+         return obj.getReason ();
+      else
+         return obj.getCode ().toString ();
+   }
+   
+   private static String getReason (NegotiationReject obj)
+   {
+      if (obj.hasReason () && ! obj.getReason ().isEmpty ())
+         return obj.getReason ();
+      else
+         return obj.getCode ().toString ();
+   }
+   
+   private boolean isThisSession (byte [] id)
+   {
+      return java.util.Arrays.equals (id, sessionIdBytes);
+   }
+
+   private boolean isThisSessionCompact (byte [] id)
+   {
+      return java.util.Arrays.equals (id, compactSessionIdBytes);
+   }
+   
+   private static UUID toUuid (byte [] bytes)
+   {
+      ByteBuffer bb = ByteBuffer.wrap (bytes);
+      bb.flip ();
+      long hi = bb.getLong ();
+      long lo = bb.getLong ();
+      return new UUID (hi, lo);
+   }
+   
+   
+   private synchronized void cancelTimer ()
+   {
+      if (timerTask != null)
+      {
+         timerTask.cancel ();
+         timerTask = null;
+      }
+   }
+
+   private synchronized void resetInterval (int interval, TimerTask task)
+   {
+      cancelTimer ();
+      timerInterval = interval;
+      timerTask = task;
+      timer.schedule (timerTask, interval, interval);
+   }
+   
+   private synchronized void resetTimer (int time, TimerTask task)
+   {
+      cancelTimer ();
+      timerTask = task;
+      timer.schedule (timerTask, time);
+   }
+   
+   private static String getInnerCause (Throwable e)
+   {
+      while (e.getCause () != null)
+         e = e.getCause ();
+      return e.toString ();
+   }
+
+   private final static int NegotiateTimeout = 2000; // Millisecs
+
+   private void negotiate ()
+   {
+      try
+      {
+         long tsp = nowNano ();
+         synchronized (pendNegReqs)
+         {
+            pendNegReqs.add (tsp);
+         }
+
+         if (log.isActiveAtLevel (Logger.Level.Trace))
+            log.trace ("=> Negotiate (tsp " + tsp + ")");
+
+         Negotiate n = new Negotiate ();
+
+         n.setSessionId (sessionIdBytes);
+         n.setTimestamp (tsp);
+         n.setClientFlow (FlowType.Unsequenced);
+         n.setCredentials (credentials);
+
+         innerSend (n);
+
+         resetTimer (NegotiateTimeout, new TimerTask () {
+               public void run () { onNegotiationTimedOut (); }
+            });
+      }
+      catch (Exception e)
+      {
+         obs.onNegotiationFailed (e);
+      }
+   }
+
+   private final static int EstablishTimeout = 2000; // Millisecs
+   
+   private void establish ()
+   {
+      try
+      {
+         long tsp = nowNano ();
+         synchronized (pendEstReqs)
+         {
+            pendEstReqs.add (tsp);
+         }
+
+         if (log.isActiveAtLevel (Logger.Level.Trace))
+            log.trace ("=> Establish (tsp " + tsp + ")");
+
+         Establish m = new Establish ();
+
+         m.setSessionId (sessionIdBytes);
+         m.setTimestamp (tsp);
+         m.setKeepaliveInterval (keepAliveInterval);
+         m.setCredentials (credentials);
+
+         innerSend (m);
+
+         resetTimer (EstablishTimeout, new TimerTask () {
+               public void run () { onEstablishmentTimedOut (); }
+            });
+      }
+      catch (Exception e)
+      {
+         obs.onEstablishmentFailed (e);
+      }
+   }
+
+   private boolean isEstablished (Object msg)
+   {
+      if (established)
+         return true;
+      else
+      {
+         log.warn (msg.getClass ().getName () + " received before establish");
+         return false;
+      }
+   }
+   
+   private static long now ()
+   {
+      return System.currentTimeMillis ();
+   }
+
+   private static long nowNano ()
+   {
+      return System.nanoTime ();
+   }
+   
+   private void onNegotiationTimedOut ()
+   {
+      if (! negotiated)
+      {
+         log.warn ("No negotiation response, retrying");
+         negotiate ();
+      }
+   }
+
+   private void onEstablishmentTimedOut ()
+   {
+      if (! established)
+      {
+         log.warn ("No establish response, retrying");
+         establish ();
+      }
+   }
+
+   private void checkServerIsAlive ()
+   {
+      log.trace ("Check server is alive");
+      long elapsed = now () - lastMsgReceivedTsp;
+      if (elapsed > 3 * serverKeepAliveInterval)
+         innerTerminate ("Session timed out after receiving no message in: " +
+                         elapsed + "ms", null, TerminationCode.Timeout);
+   }
+
+   private void showClientIsAlive ()
+   {
+      log.trace ("Show client is alive");
+      long elapsed = now () - lastMsgSentTsp;
+      if (elapsed + timerInterval >= (int)(keepAliveInterval * 0.9))
+         try
+         {
+            log.trace ("=> Heartbeat");
+            innerSend (new Heartbeat ());
          }
          catch (Exception e)
          {
-            // ignored
+            innerTerminate ("Failed to send heartbeat", e,
+                            TerminationCode.UnspecifiedError);
          }
-         
-         obs.onRejected ("Heartbeat timeout");
-      }
    }
 
-   private void sendHeartbeat ()
+   private void onHbtTimer ()
    {
-      if (verbosity > 0)
-         log.info ("=> Heartbeat");
-
-      long since = System.currentTimeMillis () - lastMsgSentTsp;
-      if (since < keepAliveInterval)
-         return;
-      
-      try
-      {
-         Heartbeat hbt = new Heartbeat ();
-
-         client.send (hbt);
-      }
-      catch (Exception e)
-      {
-         hbtTask.cancel ();
-         hbtTask = null;
-
-         obs.onRejected (e.getMessage ());
-      }
-   }
-
-   private final class NegotiateTimerTask extends TimerTask
-   {
-      NegotiateTimerTask (Session s)
-      {
-         this.session = s;
-      }
-
-      public void run ()
-      {
-         session.onNegotiateTimedOut ();
-      }
-
-      Session session;
-   }
-
-   private final class EstablishTimerTask extends TimerTask
-   {
-      EstablishTimerTask (Session s)
-      {
-         this.session = s;
-      }
-
-      public void run ()
-      {
-         session.onEstablishTimedOut ();
-      }
-
-      Session session;
-   }
-
-   private final class HeartbeatTimerTask extends TimerTask
-   {
-      HeartbeatTimerTask (Session s)
-      {
-         this.session = s;
-      }
-
-      public void run ()
-      {
-         session.sendHeartbeat ();
-         session.checkHeartbeat ();
-      }
-
-      Session session;
+      showClientIsAlive ();
+      checkServerIsAlive ();
    }
 
    private final SessionEventObserver obs;
-   private final int verbosity;
    private final Client client;
    private final DefaultObsRegistry appRegistry;
    private final Dispatcher appDispatcher;
+   private final ArrayDeque<Pending> queue;
+   private final Operation onceOp;
+   private final Object [] oncePair;
+   private final UUID sessionId;
+   private final byte[] sessionIdBytes;
+   private final byte[] compactSessionIdBytes;
+   private final HashSet<Long> pendNegReqs;
+   private final HashSet<Long> pendEstReqs;
+   private final HashSet<Long> pendRetReqs;
+
    private Object credentials;
-   private byte[] sessionId;
-   private long tsp;
-   private long lastMsgReceivedTsp;
-   private long lastMsgSentTsp;
-   private int keepAliveInterval;
-   private int serverKeepAliveInterval;
-   private boolean negotiated;
-   private boolean established;
-   private long nextSeqNo;
+   
+   private volatile int keepAliveInterval;
+   private volatile int serverKeepAliveInterval;
+   private volatile long retReqTsp;
+   private volatile long lastMsgReceivedTsp;
+   private volatile long lastMsgSentTsp;
+   private volatile boolean negotiated;
+   private volatile boolean established;
+   private volatile long firstSeqNoInQueue;
+   private volatile long nextExpectedIncomingSeqNo;
+   private volatile long nextActualIncomingSeqNo;
+   private volatile long reRequestRetransmitAt;
+   private volatile long requestedRetransmitEnd;
+   
    private TimerTask timerTask;
-   private TimerTask hbtTask;
+   private int timerInterval;
    private static Timer timer = new Timer ();
+   private boolean isSeqSrv;
+   private boolean pendTerm;
+   private long nextOnceToken;
+   private boolean isRetransmit;
 
-   private static final Logger log = Logger.getLogger (Client.class.getName ());
+   private final Logger log = Logger.Manager.getLogger (Client.class);
 }
-

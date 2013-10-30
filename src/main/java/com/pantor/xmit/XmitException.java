@@ -62,5 +62,16 @@ public class XmitException extends Exception
    {
       super (cause);
    }
+
+   /**
+      Creates a chained exception with a message
+
+      @param cause the next exception in the chain
+   */
+   
+   public XmitException (String msg, Throwable cause)
+   {
+      super (msg, cause);
+   }
 }
 

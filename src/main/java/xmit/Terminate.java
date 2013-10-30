@@ -6,12 +6,15 @@ public class Terminate
 {
   public byte [] getSessionId () { return m_SessionId; }
   public void setSessionId (byte [] v) { m_SessionId = v; }
+  public TerminationCode getCode () { return m_Code; }
+  public void setCode (TerminationCode v) { m_Code = v; }
   public java.lang.String getReason () { return m_Reason; }
   public boolean hasReason () { return m_Reason != null; }
   public void clearReason () { m_Reason = null; }
   public void setReason (java.lang.String v) { m_Reason = v; }
   
   private byte [] m_SessionId;
+  private TerminationCode m_Code;
   private java.lang.String m_Reason;
 }
 

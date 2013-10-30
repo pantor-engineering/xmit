@@ -2,14 +2,12 @@
 
 package xmit;
 
-public class EstablishAck
+public class EstablishmentAck
 {
   public byte [] getSessionId () { return m_SessionId; }
   public void setSessionId (byte [] v) { m_SessionId = v; }
   public long getRequestTimestamp () { return m_RequestTimestamp; }
   public void setRequestTimestamp (long v) { m_RequestTimestamp = v; }
-  public long getTimestamp () { return m_Timestamp; }
-  public void setTimestamp (long v) { m_Timestamp = v; }
   public long getKeepaliveInterval () { return m_KeepaliveInterval; }
   public void setKeepaliveInterval (long v) { m_KeepaliveInterval = v; }
   public long getNextSeqNo () { return m_NextSeqNo; }
@@ -21,7 +19,6 @@ public class EstablishAck
   
   private byte [] m_SessionId;
   private long m_RequestTimestamp;
-  private long m_Timestamp;
   private long m_KeepaliveInterval;
   private long m_NextSeqNo;
 }
