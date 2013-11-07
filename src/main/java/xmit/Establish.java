@@ -8,8 +8,8 @@ public class Establish
   public void setTimestamp (long v) { m_Timestamp = v; }
   public byte [] getSessionId () { return m_SessionId; }
   public void setSessionId (byte [] v) { m_SessionId = v; }
-  public long getKeepaliveInterval () { return m_KeepaliveInterval; }
-  public void setKeepaliveInterval (long v) { m_KeepaliveInterval = v; }
+  public int getKeepaliveInterval () { return m_KeepaliveInterval; }
+  public void setKeepaliveInterval (int v) { m_KeepaliveInterval = v; }
   public java.lang.Object getCredentials () { return m_Credentials; }
   public boolean hasCredentials () { return m_Credentials != null; }
   public void clearCredentials () { m_Credentials = null; }
@@ -17,7 +17,7 @@ public class Establish
   
   private long m_Timestamp;
   private byte [] m_SessionId;
-  private long m_KeepaliveInterval;
+  private int m_KeepaliveInterval;
   private java.lang.Object m_Credentials;
 }
 

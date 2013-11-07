@@ -62,7 +62,7 @@ import xmit.NegotiationReject;
 import xmit.Establish;
 import xmit.EstablishmentAck;
 import xmit.EstablishmentReject;
-import xmit.Heartbeat;
+import xmit.UnsequencedHeartbeat;
 import xmit.Sequence;
 import xmit.Context;
 import xmit.PackedContext;
@@ -70,7 +70,6 @@ import xmit.Terminate;
 import xmit.TerminationCode;
 import xmit.FinishedSending;
 import xmit.RetransmitRequest;
-import xmit.RetransmitRequestResponse;
 import xmit.Retransmission;
 
 import xmit_once.Operation;
@@ -450,8 +449,7 @@ public final class Session implements Runnable
    public void onNegotiationResponse (NegotiationResponse obj)
    {
       if (log.isActiveAtLevel (Logger.Level.Trace))
-         log.trace ("<= NegotiationResponse (snId: " +
-                    sessionId + ", tsp: " + obj.getRequestTimestamp () + ")");
+         traceResponse (obj, obj.getSessionId (), obj.getRequestTimestamp ());
 
       if (! negotiated)
       {
@@ -476,8 +474,7 @@ public final class Session implements Runnable
    public void onNegotiationReject (NegotiationReject obj)
    {
       if (log.isActiveAtLevel (Logger.Level.Trace))
-         log.trace ("<= NegotiationReject (snId: " +
-                    sessionId + ", tsp: " + obj.getRequestTimestamp () + ")");
+         traceResponse (obj, obj.getSessionId (), obj.getRequestTimestamp ());
 
       if (! negotiated && isValid (obj))
       {
@@ -490,13 +487,11 @@ public final class Session implements Runnable
    public void onEstablishmentAck (EstablishmentAck obj)
       throws XmitException
    {
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         traceResponse (obj, obj.getSessionId (), obj.getRequestTimestamp ());
+
       if (! established)
       {
-         if (log.isActiveAtLevel (Logger.Level.Trace))
-            log.trace ("<= EstablishmentAck (snId: " +
-                       sessionId + ", tsp: " +
-                       obj.getRequestTimestamp () + ")");
-
          if (isValid (obj))            
          {
             receivedMsg ();
@@ -504,7 +499,7 @@ public final class Session implements Runnable
             pendTerm = false;
             cancelTimer ();
 
-            serverKeepAliveInterval = (int)obj.getKeepaliveInterval ();
+            serverKeepAliveInterval = obj.getKeepaliveInterval ();
 
             int interval =
                Math.min (keepAliveInterval, serverKeepAliveInterval * 3);
@@ -531,8 +526,7 @@ public final class Session implements Runnable
    public void onEstablishmentReject (EstablishmentReject obj)
    {
       if (log.isActiveAtLevel (Logger.Level.Trace))
-         log.trace ("<= EstablishmentReject (snId: " +
-                    sessionId + ", tsp: " + obj.getRequestTimestamp () + ")");
+         traceResponse (obj, obj.getSessionId (), obj.getRequestTimestamp ());
 
       if (! established && isValid (obj))
       {
@@ -542,16 +536,11 @@ public final class Session implements Runnable
       }
    }
 
-   public void onHeartbeat (Heartbeat obj)
+   public void onUnsequencedHeartbeat (UnsequencedHeartbeat obj)
    {
-      log.trace ("<= Heartbeat");
+      log.trace ("<= UnsequencedHeartbeat");
       if (isEstablished (obj))
-      {
          receivedMsg ();
-         isRetransmit = false;
-         if (obj.hasNextSeqNo ())
-            startFrame (obj.getNextSeqNo (), "Xmit:Heartbeat.NextSeqNo");
-      }
    }
 
    public void onSequence (Sequence obj)
@@ -600,17 +589,6 @@ public final class Session implements Runnable
                          "supported", null, TerminationCode.UnspecifiedError);
    }
 
-   public void onRetransmission (Retransmission obj)
-   {
-      log.trace ("<= Restransmission");
-      if (isEstablished (obj))
-      {
-         receivedMsg ();
-         isRetransmit = true;
-         startFrame (obj.getNextSeqNo (), "Xmit:Retransmission");
-      }
-   }
-
    public void onRetransmitRequest (RetransmitRequest obj)
    {
       log.trace ("<= RetransmitRequest");
@@ -620,16 +598,23 @@ public final class Session implements Runnable
                          TerminationCode.ReRequestOutOfBounds);
    }
 
-   public void onRetransmitRequestResponse (RetransmitRequestResponse obj)
+   public void onRetransmission (Retransmission obj)
    {
-      log.trace ("<= RetransmitRequestResponse");
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         traceResponse (obj, obj.getSessionId (), obj.getRequestTimestamp ());
+
       if (isValid (obj) && isEstablished (obj))
       {
-         long end = obj.getFromSeqNo () + obj.getCount ();
+         receivedMsg ();
+         long nextSeqNo = obj.getNextSeqNo (); 
+         long end = nextSeqNo + obj.getCount ();
          if (end >= requestedRetransmitEnd)
             reRequestRetransmitAt = 0;
          else
             reRequestRetransmitAt = end;
+
+         isRetransmit = true;
+         startFrame (nextSeqNo, "Xmit:Retransmission");
       }
    }
 
@@ -1006,10 +991,10 @@ public final class Session implements Runnable
                       pendNegReqs, "Negotiation reject");
    }
 
-   private boolean isValid (RetransmitRequestResponse obj)
+   private boolean isValid (Retransmission obj)
    {
       return isValid (obj.getSessionId (), obj.getRequestTimestamp (),
-                      pendRetReqs, "Retransmit request response");
+                      pendRetReqs, "Retransmission");
    }
 
    private boolean isValid (byte [] snId, long reqTsp,
@@ -1223,12 +1208,12 @@ public final class Session implements Runnable
       if (elapsed + timerInterval >= (int)(keepAliveInterval * 0.9))
          try
          {
-            log.trace ("=> Heartbeat");
-            innerSend (new Heartbeat ());
+            log.trace ("=> UnsequencedHeartbeat");
+            innerSend (new UnsequencedHeartbeat ());
          }
          catch (Exception e)
          {
-            innerTerminate ("Failed to send heartbeat", e,
+            innerTerminate ("Failed to send unsequenced heartbeat", e,
                             TerminationCode.UnspecifiedError);
          }
    }
@@ -1237,6 +1222,13 @@ public final class Session implements Runnable
    {
       showClientIsAlive ();
       checkServerIsAlive ();
+   }
+
+   private void traceResponse (Object msg, byte [] snId, long tsp)
+   {
+      log.trace (String.format ("<= %s (snId: %s, reqTsp: %s)",
+                                msg.getClass ().getName (),
+                                toUuid (snId), tsp));
    }
 
    private final SessionEventObserver obs;
@@ -1270,7 +1262,8 @@ public final class Session implements Runnable
    
    private TimerTask timerTask;
    private int timerInterval;
-   private static Timer timer = new Timer ();
+   private static Timer timer = new Timer ("XmitSessionTimer",
+                                           true /* daemon */);
    private boolean isSeqSrv;
    private boolean pendTerm;
    private long nextOnceToken;

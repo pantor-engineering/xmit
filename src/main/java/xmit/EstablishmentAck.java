@@ -8,8 +8,8 @@ public class EstablishmentAck
   public void setSessionId (byte [] v) { m_SessionId = v; }
   public long getRequestTimestamp () { return m_RequestTimestamp; }
   public void setRequestTimestamp (long v) { m_RequestTimestamp = v; }
-  public long getKeepaliveInterval () { return m_KeepaliveInterval; }
-  public void setKeepaliveInterval (long v) { m_KeepaliveInterval = v; }
+  public int getKeepaliveInterval () { return m_KeepaliveInterval; }
+  public void setKeepaliveInterval (int v) { m_KeepaliveInterval = v; }
   public long getNextSeqNo () { return m_NextSeqNo; }
   public boolean hasNextSeqNo () { return has_NextSeqNo; }
   public void clearNextSeqNo () { has_NextSeqNo = false; }
@@ -19,7 +19,7 @@ public class EstablishmentAck
   
   private byte [] m_SessionId;
   private long m_RequestTimestamp;
-  private long m_KeepaliveInterval;
+  private int m_KeepaliveInterval;
   private long m_NextSeqNo;
 }
 

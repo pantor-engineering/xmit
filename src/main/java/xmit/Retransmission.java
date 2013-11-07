@@ -8,8 +8,14 @@ public class Retransmission
   public void setSessionId (byte [] v) { m_SessionId = v; }
   public long getNextSeqNo () { return m_NextSeqNo; }
   public void setNextSeqNo (long v) { m_NextSeqNo = v; }
+  public long getRequestTimestamp () { return m_RequestTimestamp; }
+  public void setRequestTimestamp (long v) { m_RequestTimestamp = v; }
+  public int getCount () { return m_Count; }
+  public void setCount (int v) { m_Count = v; }
   
   private byte [] m_SessionId;
   private long m_NextSeqNo;
+  private long m_RequestTimestamp;
+  private int m_Count;
 }
 
