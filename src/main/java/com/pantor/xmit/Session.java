@@ -650,15 +650,17 @@ public final class Session implements Runnable, Client.PacketObserver
    {
       if (isEstablished (o))
       {
-         if (log.isActiveAtLevel (Logger.Level.Trace))
-            log.trace ("<= Any " + o.toString ());
-
          receivedMsg ();
 
          if (isSeqSrv)
             onSequencedMsg (o);
          else
+         {
+            if (log.isActiveAtLevel (Logger.Level.Trace))
+               log.trace ("<= Unsequenced app msg: " +
+                          o.getClass ().getName ());
             dispatchMsg (o);
+         }
       }
    }
 
@@ -713,6 +715,9 @@ public final class Session implements Runnable, Client.PacketObserver
 
    private boolean startFrame (long nextSeqNo, String what)
    {
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("<= NextSeqNo: " + nextSeqNo);
+      
       if (isSeqSrv)
       {
          nextActualIncomingSeqNo = nextSeqNo;
@@ -751,6 +756,10 @@ public final class Session implements Runnable, Client.PacketObserver
       if (nextActualIncomingSeqNo != 0)
       {         
          long actualSn = nextActualIncomingSeqNo ++;
+         if (log.isActiveAtLevel (Logger.Level.Trace))
+            log.trace ("<= Sequenced app msg: " +
+                       msg.getClass ().getName () + ", seqNo: " + actualSn);
+         
          if (actualSn == nextExpectedIncomingSeqNo)
          {
             ++ nextExpectedIncomingSeqNo;
