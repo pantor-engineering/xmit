@@ -1071,12 +1071,10 @@ public final class Session implements Runnable, Client.PacketObserver
    private static UUID toUuid (byte [] bytes)
    {
       ByteBuffer bb = ByteBuffer.wrap (bytes);
-      bb.flip ();
       long hi = bb.getLong ();
       long lo = bb.getLong ();
       return new UUID (hi, lo);
    }
-   
    
    private synchronized void cancelTimer ()
    {
