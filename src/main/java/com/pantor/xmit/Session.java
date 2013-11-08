@@ -93,7 +93,7 @@ import xmit_once.NotAppliedReason;
    Runnable} interface.</p>
  */
 
-public final class Session implements Runnable
+public final class Session implements Runnable, Client.PacketObserver
 {
    private final static int CompactArrayLen = 8;
    
@@ -117,7 +117,7 @@ public final class Session implements Runnable
    {
       this.obs = obs;
       this.keepAliveInterval = keepAliveInterval;
-      this.nextActualIncomingSeqNo = 1;
+      this.nextActualIncomingSeqNo = 0;
       this.nextExpectedIncomingSeqNo = 1;
       this.queue = new ArrayDeque<Pending> ();
       this.onceOp = new Operation ();
@@ -141,6 +141,7 @@ public final class Session implements Runnable
          DefaultObjectModel om = new DefaultObjectModel (schemas);
          client = new Client (socket, om);
          client.addObserver (this);
+         client.setPacketObserver (this);
 
          appRegistry = new DefaultObsRegistry (om);
          appRegistry.addObserver (new OnceObs ());
@@ -661,6 +662,16 @@ public final class Session implements Runnable
       }
    }
 
+   public void onPacketStart ()
+   {
+      nextActualIncomingSeqNo = 0;
+   }
+   
+   public void onPacketEnd ()
+   {
+      nextActualIncomingSeqNo = 0;
+   }
+   
    private void onFailedToSendAppMsg (Object msg, Throwable e)
    {
       if (msg != null)
@@ -737,26 +748,31 @@ public final class Session implements Runnable
    
    private void onSequencedMsg (Object msg)
    {
-      long actualSn = nextActualIncomingSeqNo ++;
-      if (actualSn == nextExpectedIncomingSeqNo)
-      {
-         ++ nextExpectedIncomingSeqNo;
-         dispatchMsg (msg);
-
-         if (firstSeqNoInQueue != 0 &&
-             nextExpectedIncomingSeqNo >= firstSeqNoInQueue)
-            flushQueue ();
-         else
+      if (nextActualIncomingSeqNo != 0)
+      {         
+         long actualSn = nextActualIncomingSeqNo ++;
+         if (actualSn == nextExpectedIncomingSeqNo)
          {
-            if (nextExpectedIncomingSeqNo == requestedRetransmitEnd)
-               flushPendTerm ();
-         }
+            ++ nextExpectedIncomingSeqNo;
+            dispatchMsg (msg);
 
-         if (nextExpectedIncomingSeqNo == reRequestRetransmitAt)
-            requestRetransmit ();
+            if (firstSeqNoInQueue != 0 &&
+                nextExpectedIncomingSeqNo >= firstSeqNoInQueue)
+               flushQueue ();
+            else
+            {
+               if (nextExpectedIncomingSeqNo == requestedRetransmitEnd)
+                  flushPendTerm ();
+            }
+
+            if (nextExpectedIncomingSeqNo == reRequestRetransmitAt)
+               requestRetransmit ();
+         }
+         else
+            onOutOfSequenceMsg (actualSn, msg);
       }
       else
-         onOutOfSequenceMsg (actualSn, msg);
+         onMissingSequence (msg);
    }
 
    private void onOutOfSequenceMsg (long actualSn, Object msg)
@@ -776,6 +792,14 @@ public final class Session implements Runnable
                       "Ignoring already seen message %s with seqno %s, " +
                       "next expected seqno is %s", msg.getClass ().getName (),
                       actualSn, nextExpectedIncomingSeqNo));
+   }
+
+   private void onMissingSequence (Object msg)
+   {
+      String reason = "No sequencing message seen when receiving " +
+         msg.getClass ().getName ();
+      log.error (reason + ", terminating");
+      innerTerminate (reason, null, TerminationCode.UnspecifiedError);
    }
    
    private void dispatchMsg (Object msg)
@@ -879,7 +903,7 @@ public final class Session implements Runnable
    private void innerTerminate (String logReason, String sendReason,
                                 Throwable cause, TerminationCode code)
    {
-      log.trace ("=> Terminate");
+      log.trace ("=> Terminate: " + logReason);
       if (established)
       {
          try
