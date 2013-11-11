@@ -116,6 +116,7 @@ public final class Session implements Runnable, Client.PacketObserver
    {
       this.obs = obs;
       this.keepAliveInterval = keepAliveInterval;
+      this.nextOnceToken = 1;
       this.nextActualIncomingSeqNo = 0;
       this.nextExpectedIncomingSeqNo = 1;
       this.queue = new ArrayDeque<Pending> ();
@@ -965,8 +966,13 @@ public final class Session implements Runnable, Client.PacketObserver
       if (token >= nextOnceToken)
          nextOnceToken = token + 1;
       else
-         throw new XmitException (
-            "XmitOnce token too low: " + token + " < " + nextOnceToken);
+      {
+         String reason =
+            "XmitOnce token too low: " + token + " < " + nextOnceToken;
+         if (token == 0)
+            reason += " (tokens start from 1)";
+         throw new XmitException (reason);
+      }
 
       sentMsg ();
       onceOp.setToken (token);
