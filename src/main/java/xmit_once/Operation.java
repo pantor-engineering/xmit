@@ -4,9 +4,9 @@ package xmit_once;
 
 public class Operation
 {
-  public int getToken () { return m_Token; }
-  public void setToken (int v) { m_Token = v; }
+  public int getSeqNo () { return m_SeqNo; }
+  public void setSeqNo (int v) { m_SeqNo = v; }
   
-  private int m_Token;
+  private int m_SeqNo;
 }
 

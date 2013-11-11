@@ -98,8 +98,8 @@ public interface SessionEventObserver
       Called when one or more operations sent by Session.sendOnce have
       been applied
 
-      @param from the earliest token applied
-      @param to the latest token applied
+      @param from the earliest seqno applied
+      @param to the latest seqno applied
     */
 
    public void onAppliedOnce (int from, int to);
@@ -108,8 +108,8 @@ public interface SessionEventObserver
       Called when one or more operations sent by Session.sendOnce were
       not applied
 
-      @param from the earliest token not applied
-      @param to the latest token not applied
+      @param from the earliest seqno not applied
+      @param to the latest seqno not applied
     */
 
    public void onNotAppliedOnce (int from, int to);

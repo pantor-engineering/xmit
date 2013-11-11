@@ -116,7 +116,7 @@ public final class Session implements Runnable, Client.PacketObserver
    {
       this.obs = obs;
       this.keepAliveInterval = keepAliveInterval;
-      this.nextOnceToken = 1;
+      this.nextOnceSeqNo = 1;
       this.nextActualIncomingSeqNo = 0;
       this.nextExpectedIncomingSeqNo = 1;
       this.queue = new ArrayDeque<Pending> ();
@@ -268,7 +268,7 @@ public final class Session implements Runnable, Client.PacketObserver
 
       @param msg message to send
 
-      @return the XmitOnce token assigned to the message
+      @return the XmitOnce seqno assigned to the message
       
       @throws XmitException if there is a schema or binding problem
       @throws IOException if there is a socket problem
@@ -302,14 +302,14 @@ public final class Session implements Runnable, Client.PacketObserver
       Sends an application message using XmitOnce
 
       @param msg message to send
-      @param token XmitOnce token to use, must be larger than any previously
-      used tokens on this session
+      @param seqNo XmitOnce seqNo to use, must be larger than any previously
+      used seqnos on this session
 
       @throws XmitException if there is a schema or binding problem
       @throws IOException if there is a socket problem
    */
    
-   public void sendOnce (Object msg, int token)
+   public void sendOnce (Object msg, int seqNo)
       throws IOException, XmitException
    {
       if (log.isActiveAtLevel (Logger.Level.Trace))
@@ -320,7 +320,7 @@ public final class Session implements Runnable, Client.PacketObserver
 
       try
       {
-         innerSendOnce (msg, token);
+         innerSendOnce (msg, seqNo);
       }
       catch (XmitException e)
       {
@@ -952,30 +952,30 @@ public final class Session implements Runnable, Client.PacketObserver
       throws IOException, BlinkException
    {
       sentMsg ();
-      int token = nextOnceToken ++;
-      onceOp.setToken (token);
+      int seqNo = nextOnceSeqNo ++;
+      onceOp.setSeqNo (seqNo);
       oncePair [1] = msg;
       client.send (oncePair);
       oncePair [1] = null;
-      return token;
+      return seqNo;
    }
 
-   private synchronized void innerSendOnce (Object msg, int token)
+   private synchronized void innerSendOnce (Object msg, int seqNo)
       throws IOException, BlinkException, XmitException
    {
-      if (token >= nextOnceToken)
-         nextOnceToken = token + 1;
+      if (seqNo >= nextOnceSeqNo)
+         nextOnceSeqNo = seqNo + 1;
       else
       {
          String reason =
-            "XmitOnce token too low: " + token + " < " + nextOnceToken;
-         if (token == 0)
-            reason += " (tokens start from 1)";
+            "XmitOnce seqno too low: " + seqNo + " < " + nextOnceSeqNo;
+         if (seqNo == 0)
+            reason += " (seqnos start from 1)";
          throw new XmitException (reason);
       }
 
       sentMsg ();
-      onceOp.setToken (token);
+      onceOp.setSeqNo (seqNo);
       oncePair [1] = msg;
       client.send (oncePair);
       oncePair [1] = null;
@@ -1299,7 +1299,7 @@ public final class Session implements Runnable, Client.PacketObserver
                                            true /* daemon */);
    private boolean isSeqSrv;
    private boolean pendTerm;
-   private int nextOnceToken;
+   private int nextOnceSeqNo;
    private boolean isRetransmit;
 
    private final Logger log = Logger.Manager.getLogger (Client.class);
