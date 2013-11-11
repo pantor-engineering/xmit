@@ -4,9 +4,9 @@ package xmit_once;
 
 public class Operation
 {
-  public long getToken () { return m_Token; }
-  public void setToken (long v) { m_Token = v; }
+  public int getToken () { return m_Token; }
+  public void setToken (int v) { m_Token = v; }
   
-  private long m_Token;
+  private int m_Token;
 }
 

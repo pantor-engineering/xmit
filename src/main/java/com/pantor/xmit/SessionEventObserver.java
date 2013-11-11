@@ -95,28 +95,23 @@ public interface SessionEventObserver
    public void onTerminated (String reason, Throwable cause);
 
    /**
-      Called when an operation sent by Session.sendOnce has been applied
-
-      @param token the token of the applied operation
-    */
-
-   public void onAppliedOnce (long token);
-
-   /**
-      Called when an operation sent by Session.sendOnce was rejected
-      for being out of order
-
-      @param token the token of the rejected operation
-    */
-
-   public void onOnceOutOfOrder (long token);
-   
-   /**
-      Called when an operation sent by Session.sendOnce had already
+      Called when one or more operations sent by Session.sendOnce have
       been applied
 
-      @param token the token of the already applied operation
+      @param from the earliest token applied
+      @param to the latest token applied
     */
 
-   public void onAlreadyAppliedOnce (long token);
+   public void onAppliedOnce (int from, int to);
+
+   /**
+      Called when one or more operations sent by Session.sendOnce were
+      not applied
+
+      @param from the earliest token not applied
+      @param to the latest token not applied
+    */
+
+   public void onNotAppliedOnce (int from, int to);
+   
 }

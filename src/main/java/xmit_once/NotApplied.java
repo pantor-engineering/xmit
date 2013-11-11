@@ -4,12 +4,12 @@ package xmit_once;
 
 public class NotApplied
 {
-  public long getToken () { return m_Token; }
-  public void setToken (long v) { m_Token = v; }
-  public NotAppliedReason getReason () { return m_Reason; }
-  public void setReason (NotAppliedReason v) { m_Reason = v; }
+  public int getFrom () { return m_From; }
+  public void setFrom (int v) { m_From = v; }
+  public int getTo () { return m_To; }
+  public void setTo (int v) { m_To = v; }
   
-  private long m_Token;
-  private NotAppliedReason m_Reason;
+  private int m_From;
+  private int m_To;
 }
 

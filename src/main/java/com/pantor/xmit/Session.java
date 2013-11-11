@@ -75,7 +75,6 @@ import xmit.Retransmission;
 import xmit_once.Operation;
 import xmit_once.Applied;
 import xmit_once.NotApplied;
-import xmit_once.NotAppliedReason;
 
 /**
    The {@code Session} class provides a basic Xmit UDP client session.
@@ -309,7 +308,7 @@ public final class Session implements Runnable, Client.PacketObserver
       @throws IOException if there is a socket problem
    */
    
-   public void sendOnce (Object msg, long token)
+   public void sendOnce (Object msg, int token)
       throws IOException, XmitException
    {
       if (log.isActiveAtLevel (Logger.Level.Trace))
@@ -701,15 +700,12 @@ public final class Session implements Runnable, Client.PacketObserver
    {
       public void onApplied (Applied msg)
       {
-         obs.onAppliedOnce (msg.getToken ());
+         obs.onAppliedOnce (msg.getFrom (), msg.getTo ());
       }
 
       public void onNotApplied (NotApplied msg)
       {
-         if (msg.getReason () == NotAppliedReason.AlreadyApplied)
-            obs.onAlreadyAppliedOnce (msg.getToken ());
-         else
-            obs.onOnceOutOfOrder (msg.getToken ());
+         obs.onNotAppliedOnce (msg.getFrom (), msg.getTo ());
       }
    }
 
@@ -955,7 +951,7 @@ public final class Session implements Runnable, Client.PacketObserver
       throws IOException, BlinkException
    {
       sentMsg ();
-      long token = nextOnceToken ++;
+      int token = nextOnceToken ++;
       onceOp.setToken (token);
       oncePair [1] = msg;
       client.send (oncePair);
@@ -963,7 +959,7 @@ public final class Session implements Runnable, Client.PacketObserver
       return token;
    }
 
-   private synchronized void innerSendOnce (Object msg, long token)
+   private synchronized void innerSendOnce (Object msg, int token)
       throws IOException, BlinkException, XmitException
    {
       if (token >= nextOnceToken)
@@ -1297,7 +1293,7 @@ public final class Session implements Runnable, Client.PacketObserver
                                            true /* daemon */);
    private boolean isSeqSrv;
    private boolean pendTerm;
-   private long nextOnceToken;
+   private int nextOnceToken;
    private boolean isRetransmit;
 
    private final Logger log = Logger.Manager.getLogger (Client.class);
