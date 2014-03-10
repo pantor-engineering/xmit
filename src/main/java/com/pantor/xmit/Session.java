@@ -71,10 +71,9 @@ import xmit.TerminationCode;
 import xmit.FinishedSending;
 import xmit.RetransmitRequest;
 import xmit.Retransmission;
-
-import xmit_once.Operation;
-import xmit_once.Applied;
-import xmit_once.NotApplied;
+import xmit.Operation;
+import xmit.Applied;
+import xmit.NotApplied;
 
 /**
    The {@code Session} class provides a basic Xmit UDP client session.
@@ -264,11 +263,12 @@ public final class Session implements Runnable, Client.PacketObserver
    }
 
    /**
-      Sends an application message using XmitOnce
+      Sends an application message using preceded by an Xmit:Operation
+      message to achieve exactly once semantics
 
       @param msg message to send
 
-      @return the XmitOnce seqno assigned to the message
+      @return the operation seqno assigned to the message
       
       @throws XmitException if there is a schema or binding problem
       @throws IOException if there is a socket problem
@@ -299,10 +299,11 @@ public final class Session implements Runnable, Client.PacketObserver
    }
 
    /**
-      Sends an application message using XmitOnce
+      Sends an application message using preceded by an Xmit:Operation
+      message to achieve exactly once semantics
 
       @param msg message to send
-      @param seqNo XmitOnce seqNo to use, must be larger than any previously
+      @param seqNo operation seqNo to use, must be larger than any previously
       used seqnos on this session
 
       @throws XmitException if there is a schema or binding problem
@@ -968,7 +969,7 @@ public final class Session implements Runnable, Client.PacketObserver
       else
       {
          String reason =
-            "XmitOnce seqno too low: " + seqNo + " < " + nextOnceSeqNo;
+            "Operation seqno too low: " + seqNo + " < " + nextOnceSeqNo;
          if (seqNo == 0)
             reason += " (seqnos start from 1)";
          throw new XmitException (reason);

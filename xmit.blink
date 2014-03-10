@@ -1,0 +1,272 @@
+# xmit.blink, version 20131105-1
+# 
+# Copyright © 2013, Pantor Engineering AB
+#
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without 
+# modification, are permitted provided that the following conditions are met:
+#
+# . Redistributions of source code must retain the above copyright notice, 
+# this list of conditions and the following disclaimer.
+#
+# . Redistributions in binary form must reproduce the above copyright notice, 
+# this list of conditions and the following disclaimer in the documentation 
+# and/or other materials provided with the distribution.
+#
+# . Neither the name of Pantor Engineering AB nor the names of its contributors 
+# may be used to endorse or promote products derived from this software without
+# specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE 
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS 
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN 
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) 
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
+# POSSIBILITY OF SUCH DAMAGE.
+
+namespace Xmit
+
+Uuid = @blink:type="UUID" fixed (16)
+DeltaMillisecs = u32
+
+# The session layer messages have high type id values as these
+# messages are relatively uncommon. The potentially more compact lower values
+# are therefore left for other use by applications. There is a single exception -
+# the Sequence message is common and is therefore assigned a low type id value.
+# This session layer reserves the type id 0x01 for Sequence and the range 
+# 0x10000 to 0x10200 for other messages.
+
+# Any message passed after Sequence is implicitly numbered, where the first
+# message after Sequence has the sequence number NextSeqNo. An application
+# message has no header and does not implement a base
+# defined at the session layer. This means that any message can be an 
+# application message and that any message can be passed in a sequenced
+# or an unsequenced flow.
+# An application layer defined on top is obviously free to put any required 
+# application level sequencing inside messages.
+# Using a datagram oriented transport like UDP, each datagram carrying a 
+# sequenced flow, the Sequence message is key to detecting packet loss and
+# packet reordering.
+#
+# If sessions are multiplexed over a transport, they are framed independently.
+# When multiplexing, the Context message expands Sequence to also specify
+# the session being sequenced.
+#
+# Any session layer message (in the range 0x10000 to 0x10200) ends the Sequence
+# implicitly and the sender must pass Sequence again before starting to send
+# sequenced messages.
+
+Sequence/0x01 ->
+  u64 NextSeqNo
+
+# If flows are multiplexed over a transport, the transport does not imply the 
+# session. Context is used to set the session for the remainder
+# of the current datagram (in a datagram oriented transport) or until a new 
+# Context is passed. In a sequenced flow, Context can take the role of Sequence
+# by including NextSeqNo (optimizes away the Sequence that would otherwise 
+# follow).
+
+Context/0x10050 ->
+  Uuid SessionId,
+  u64 NextSeqNo?
+
+# PackedContext is a short form that makes multiplexing more efficient
+# by reducing the overhead of the Context message. PackedContext is safe
+# to use for sequence numbers that are below the 32 bit limit.
+# SessionIdPrefix is a subset prefix of the uuid known by the producer to be
+# unique also on the receiver side.
+
+PackedContext/0x10051 ->
+  binary (8) SessionIdPrefix,
+  u32 NextSeqNo?
+
+# Negotiation* is a session negotiation protocol
+# that is used for a client to declare what id it will be using,
+# without having to go out of band.
+# There is no concept of resetting a session. Instead of starting over
+# a session, a new session is negotiated - a SessionId in Uuid form is cheap.
+# The response to Negotiate is one of NegotiationResponse and NegotiationReject.
+
+FlowType =
+  Sequenced | Unsequenced
+
+Negotiate/0x10000 ->
+  nanotime Timestamp,
+  Uuid SessionId,
+  FlowType ClientFlow,
+  object Credentials?
+
+NegotiationResponse/0x10001 ->
+  nanotime RequestTimestamp, # Matches Negotiate.Timestamp
+  Uuid SessionId,
+  FlowType ServerFlow
+
+NegotiationRejectCode = Credentials | Unspecified
+
+NegotiationReject/0x10002 ->
+  nanotime RequestTimestamp, # Matches Negotiate.Timestamp
+  Uuid SessionId,
+  NegotiationRejectCode Code,
+  string Reason?
+
+# A multicast/broadcast flow is session based and producer initiated.
+# The producer defines a session and the corresponding topic.
+# Recovery (RetransmitRequest and Retransmission) is performed
+# on a separate established peer to peer session using the same SessionId.
+
+Topic/0x10030 ->
+  Uuid SessionId,
+  FlowType Flow,
+  object Classification
+
+StringClassification/0x10031 ->
+  string Description
+
+# Establish attempts to bind the specified logical session to the
+# transport that the message is passed over.
+# The response to Establish is one of EstablishAck and EstablishReject.
+
+Establish/0x10010 ->
+  nanotime Timestamp,
+  Uuid SessionId,
+  DeltaMillisecs KeepaliveInterval,
+  object Credentials?
+
+EstablishmentAck/0x10011 ->
+  Uuid SessionId, # SessionId is redundant and included only for robustness
+  nanotime RequestTimestamp, # Matches Establish.Timestamp
+  DeltaMillisecs KeepaliveInterval,
+  u64 NextSeqNo?
+
+EstablishmentRejectCode = Unnegotiated | AlreadyEstablished | SessionBlocked | 
+  KeepaliveInterval | Credentials | Unspecified
+  
+EstablishmentReject/0x10012 ->
+  Uuid SessionId, # SessionId is redundant and included only for robustness
+  nanotime RequestTimestamp, # Matches Establish.Timestamp
+  EstablishmentRejectCode Code,
+  string Reason?
+
+# Terminate is a signal to the counterparty that this side is dropping
+# the binding between the logical session and the underlying transport.
+
+TerminationCode =  Finished | UnspecifiedError | ReRequestOutOfBounds | 
+  ReRequestInProgress | Timeout
+
+Terminate/0x10015 ->
+  Uuid SessionId, # SessionId is redundant except when multiplexing
+  TerminationCode Code,
+  string Reason?
+
+# The purpose of keepalive messages is to detect that a logical session
+# has disappeared or that there is a problem with the transport, 
+# allowing the peer to terminate session state timely and to
+# potentially reestablish the session.
+# For sequenced flows, Sequence and Context is used as the keepalive message.
+# For unsequenced flows, UnsequencedHeartbeat is used as the keepalive message.
+
+UnsequencedHeartbeat/0x10020
+
+#
+# Replay based recovery
+#
+
+RetransmitRequest/0x10021 ->
+  Uuid SessionId, # Defeats the need for Context when multiplexing
+  nanotime Timestamp,
+  u64 FromSeqNo,
+  u32 Count
+
+# Retransmission implies that the subsequent messages are sequenced
+# without requiring that a Sequence message is passed. In a datagram
+# oriented transport, Retransmission is passed in every single retransmission
+# datagram.
+
+Retransmission/0x10022 ->
+  Uuid SessionId,
+  u64 NextSeqNo,
+  nanotime RequestTimestamp, # Matches Request
+  u32 Count
+
+# The producing side of a sequenced flow signals that the flow has logically 
+# reached its end by sending FinishedSending. The receiving side can Terminate 
+# the session. If both directions are sequenced, the peer would not know when
+# the session can be terminated safely. The receiving side therefore sends
+# FinishedReceiving to make it clear when the session can be terminated
+
+FinishedSending/0x10025 ->
+  Uuid SessionId, # SessionId is redundant and included only for robustness
+  u64 LastSeqNo
+
+FinishedReceiving/0x10026 ->
+  Uuid SessionId # SessionId is redundant and included only for robustness
+
+# Idempotent sequence numbering is made per underlying Xmit session, i.e. the 
+# combination of the xmit session identifier and the sequence number defines an 
+# operation to be globally unique.
+
+SeqNo = u32
+
+# Operation associates the element that follows with an operation that has
+# the identifier 'SeqNo'.
+#
+# An operation with a 'SeqNo' lower or equal to a previously applied
+# sequence number is discarded by the receiver and a NotApplied response is 
+# returned.
+
+#
+# Operation allows a non-consecutive sequence number to be processed, i.e. an
+# operation that is lost in transit will not block the processing of
+# subsequent operations. If the lost operation is carried out later,
+# the server will send a NotApplied response.
+# To successfully retry the operation, the client has to create a new operation
+# with a new sequence number and discard the lost operation that was not applied.
+
+Operation/0x10200 ->
+  SeqNo SeqNo
+
+# The server optionally responds to the operation with a result. The application
+# message flow going in the other direction may indicate by other means
+# that an operation has been carried out. The peer may therefore decide to 
+# piggy back applied acknowledgments in application messages.
+
+Applied/0x10201 ->
+  SeqNo From,
+  SeqNo To
+
+# NotApplied specifies a range [From,To]
+NotApplied/0x10202 ->
+  SeqNo From,
+  SeqNo To
+
+#
+# Identification implementations
+#
+
+StringIdentification/0x10170 ->
+  string Identity
+
+#
+# Experimental messages
+#
+
+# QueueProbe and QueueProbeResponse is used by the producer to determine that
+# the receiver is keeping up with the flow it produces and can allow
+# the producer to adjust its flow, for instance by conflating the data it
+# creates. QueueProbeResponse should be sent in response to QueueProbe only
+# when all messages received prior to QueueProbe have been processed at the
+# application level.
+
+QueueProbe/0x10110 ->
+  Uuid SessionId,
+  u64 Key
+
+QueueProbeResponse/0x10111 ->
+  Uuid SessionId,
+  u64 Key
