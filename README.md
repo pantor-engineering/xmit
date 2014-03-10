@@ -1,6 +1,6 @@
 XMIT defines lightweight logical sessions. A session is used
 to carry application messages. XMIT is responsible for using
-the selected communication mechanism to deliver messages
+the selected communications mechanism to deliver messages
 orderly from one application to one or more other applications
 in the context of a session.
 
