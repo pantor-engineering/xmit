@@ -697,7 +697,7 @@ public final class Session implements Runnable, Client.PacketObserver
       Object msg;
    }
 
-   private class OnceObs
+   public class OnceObs
    {
       public void onApplied (Applied msg)
       {
