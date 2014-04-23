@@ -946,7 +946,7 @@ public final class ClientSession implements Client.Session
    {
       sentMsg ();
       long firstSn = nextOutgoingSeqNo;
-      nextOutgoingSeqNo = getIterableSize (msgs);
+      nextOutgoingSeqNo += getIterableSize (msgs);
       wr.write (getSeqPrefix (firstSn));
       wr.write (msgs);
       flush ();
