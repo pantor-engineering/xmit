@@ -1,0 +1,7 @@
+namespace Test
+
+Ping/10 ->
+  u32 Value
+
+Pong/11 ->
+  u32 Value

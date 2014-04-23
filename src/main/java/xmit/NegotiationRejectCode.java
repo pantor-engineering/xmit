@@ -5,7 +5,8 @@ package xmit;
 public enum NegotiationRejectCode
 {
   Credentials (0),
-  Unspecified (1);
+  Unspecified (1),
+  FlowTypeNotSupported (2);
   
   private NegotiationRejectCode (int val) { this.val = val; }
   public int getValue () { return val; }

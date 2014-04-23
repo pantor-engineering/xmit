@@ -4,12 +4,12 @@ package xmit;
 
 public class Applied
 {
-  public int getFrom () { return m_From; }
-  public void setFrom (int v) { m_From = v; }
-  public int getTo () { return m_To; }
-  public void setTo (int v) { m_To = v; }
+  public long getFrom () { return m_From; }
+  public void setFrom (long v) { m_From = v; }
+  public int getCount () { return m_Count; }
+  public void setCount (int v) { m_Count = v; }
   
-  private int m_From;
-  private int m_To;
+  private long m_From;
+  private int m_Count;
 }
 

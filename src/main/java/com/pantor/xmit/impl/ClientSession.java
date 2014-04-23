@@ -1,4 +1,4 @@
-// Copyright (c) 2013, Pantor Engineering AB
+// Copyright (c) 2014, Pantor Engineering AB
 //
 // All rights reserved.
 //
@@ -33,11 +33,12 @@
 // USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
 // DAMAGE.
 
-package com.pantor.xmit;
+package com.pantor.xmit.impl;
 
 import java.io.IOException;
 import java.net.DatagramSocket;
 import java.nio.ByteBuffer;
+import java.nio.channels.DatagramChannel;
 import java.nio.ByteOrder;
 import java.lang.Math;
 import java.util.UUID;
@@ -46,13 +47,17 @@ import java.util.Timer;
 import java.util.Arrays;
 import java.util.TimerTask;
 import java.util.HashSet;
+import java.util.Date;
 
-import com.pantor.blink.DefaultObjectModel;
-import com.pantor.blink.Client;
-import com.pantor.blink.Schema;
 import com.pantor.blink.DefaultObsRegistry;
 import com.pantor.blink.Dispatcher;
+import com.pantor.blink.ObjectModel;
 import com.pantor.blink.BlinkException;
+import com.pantor.blink.CompactReader;
+import com.pantor.blink.CompactWriter;
+import com.pantor.blink.ByteBuf;
+import com.pantor.blink.NsName;
+import com.pantor.blink.Observer;
 import com.pantor.blink.Logger;
 
 import xmit.FlowType;
@@ -71,80 +76,56 @@ import xmit.TerminationCode;
 import xmit.FinishedSending;
 import xmit.RetransmitRequest;
 import xmit.Retransmission;
-import xmit.Operation;
 import xmit.Applied;
 import xmit.NotApplied;
 
-/**
-   The {@code Session} class provides a basic Xmit UDP client session.
+import com.pantor.xmit.Client.Session.EventObserver;
+import com.pantor.xmit.Client;
+import com.pantor.xmit.XmitException;
 
-   <p>It sends and receives messages over Xmit.</p>
+import static com.pantor.xmit.impl.Util.*;
 
-   <p>You initiate the session through the {@code initiate} method and
-   send messages through the {@code send} method.
-   The session object dispatches any received app messages to matching
-   observers as added by the {@code addAppObserver} method.</p>
+// FIXME: Handle finished sending/receiving
 
-   <p>The session is thread based and can either be started through the
-   {@code start} method that will spawn a new thread, or it can be
-   integrated more flexible with custom created threads through the {@code
-   Runnable} interface.</p>
- */
-
-public final class Session implements Runnable, Client.PacketObserver
+public final class ClientSession implements Client.Session
 {
-   private final static int CompactArrayLen = 8;
+   private final static int PackedPrefixLen = 8;
    
-   /**
-      Creates a session that will use the specified socket. 
-      It will map messages as defined by the specified schemas.
-
-      @param socket a DatagramSocket
-      @param schemas a vector of blink schemas
-      @param obs a session event observer
-      @param keepAliveInterval the client side keep alive interval for
-             the xmit session
-      @throws XmitException if there is an Xmit problem
-      @throws IOException if there is a socket problem
-    */
-
-   public Session (DatagramSocket socket,
-                   String [] schemas,
-                   SessionEventObserver obs,
-                   int keepAliveInterval) throws IOException, XmitException
+   public ClientSession (DatagramChannel ch, ObjectModel om,
+                         EventObserver obs, int keepaliveInterval,
+                         Client.FlowType flowType)
+      throws IOException, XmitException
    {
-      this.obs = obs;
-      this.keepAliveInterval = keepAliveInterval;
-      this.nextOnceSeqNo = 1;
-      this.nextActualIncomingSeqNo = 0;
-      this.nextExpectedIncomingSeqNo = 1;
-      this.queue = new ArrayDeque<Pending> ();
-      this.onceOp = new Operation ();
-      this.oncePair = new Object [2];
-      this.pendNegReqs = new HashSet<Long> ();
-      this.pendEstReqs = new HashSet<Long> ();
-      this.pendRetReqs = new HashSet<Long> ();
-      this.sessionId = UUID.randomUUID ();
-      this.sessionIdBytes = new byte [16];
-      
-      ByteBuffer bb = ByteBuffer.wrap (sessionIdBytes);
-      bb.putLong (sessionId.getMostSignificantBits ());
-      bb.putLong (sessionId.getLeastSignificantBits ());
-      this.compactSessionIdBytes =
-         Arrays.copyOfRange (sessionIdBytes, 0, CompactArrayLen);
-      
-      oncePair [0] = onceOp;
-
       try
       {
-         DefaultObjectModel om = new DefaultObjectModel (schemas);
-         client = new Client (socket, om);
-         client.addObserver (this);
-         client.setPacketObserver (this);
+         this.obs = obs;
+         this.keepaliveInterval = keepaliveInterval;
+         this.nextOutgoingSeqNo = 1;
+         this.nextActualIncomingSeqNo = 0;
+         this.nextExpectedIncomingSeqNo = 1;
+         this.queue = new ArrayDeque<Pending> ();
+         this.seqPrefix = new Sequence ();
+         this.pendNegReqs = new HashSet<Long> ();
+         this.pendEstReqs = new HashSet<Long> ();
+         this.pendRetReqs = new HashSet<Long> ();
+         this.sessionId = UUID.randomUUID ();
+         this.sessionIdBytes = toBytes (sessionId);
+         this.packedSessionIdBytes =
+            Arrays.copyOfRange (sessionIdBytes, 0, PackedPrefixLen);
+         this.inBb = ByteBuffer.allocate (1500);
+         this.inBuf = new ByteBuf (inBb.array (), 0, inBb.limit ());
+         DefaultObsRegistry oreg = new DefaultObsRegistry (om);
+         oreg.addObserver (this);
+         this.rd = new CompactReader (om, oreg);
+         this.outBb = ByteBuffer.allocate (1500);
+         this.outBuf = new ByteBuf (outBb.array ());
+         this.wr = new CompactWriter (om, outBuf);
+         this.isIdempotent = flowType == Client.FlowType.Idempotent;
+         this.ch = ch;
+         this.appRegistry = new DefaultObsRegistry (om);
+         this.appDispatcher = new Dispatcher (om, appRegistry);
 
-         appRegistry = new DefaultObsRegistry (om);
-         appRegistry.addObserver (new OnceObs ());
-         appDispatcher = new Dispatcher (om, appRegistry);
+         appRegistry.addObserver (new OperationObs ());
       }
       catch (BlinkException e)
       {
@@ -152,14 +133,7 @@ public final class Session implements Runnable, Client.PacketObserver
       }
    }
 
-   /**
-      Adds an observer for received application messages. 
-      The prefix when looking up matching observer methods will be "on".
-
-      @param obs an observer to add
-      @throws XmitException if there is a schema or binding problem
-   */
-   
+   @Override
    public void addAppObserver (Object obs) throws XmitException
    {
       try
@@ -172,15 +146,26 @@ public final class Session implements Runnable, Client.PacketObserver
       }
    }
 
-   /**
-      Initiate an xmit session using optional credentials. Any failure
-      to initiate will be reported as failed negotiation or establishment
-      through the {@code SessionEventObserver}
+   @Override
+   public void addAppObserver (Object obs, String prefix) throws XmitException
+   {
+      try
+      {
+         appRegistry.addObserver (obs, prefix);
+      }
+      catch (BlinkException e)
+      {
+         throw new XmitException (e);
+      }
+   }
 
-      @param credentials credentials to use when initiating. Use
-      {@code null} to indicate absence of credentials.
-   */
-   
+   @Override
+   public void addAppObserver (NsName name, Observer obs)
+   {
+      appRegistry.addObserver (name, obs);
+   }
+
+   @Override
    public void initiate (Object credentials)
    {
       log.trace ("=> Initiate");
@@ -193,35 +178,19 @@ public final class Session implements Runnable, Client.PacketObserver
          establish ();
    }
 
-   /**
-      Initiate an xmit session. Any failure to initiate will be
-      reported as failed negotiation or establishment through the
-      {@code SessionEventObserver}
-   */
-   
+   @Override
    public void initiate ()
    {
       initiate (null);
    }
    
-   /**
-      Terminate an xmit session
-
-      @param reason the reason for terminating
-   */
-
+   @Override
    public void terminate (String reason)
    {
       innerTerminate (reason, reason, null, TerminationCode.Finished);
    }
 
-   /**
-      Resets the session. If the session is already established, it
-      will be terminated.  If there are any ongoing negotiation or
-      establishment attempts, they will be aborted. It will however
-      retain any already achieved negotiation state.
-   */
-   
+   @Override
    public void reset ()
    {
       if (established)
@@ -230,25 +199,24 @@ public final class Session implements Runnable, Client.PacketObserver
          cancelTimer ();
    }
    
-   /**
-      Sends an application message
-
-      @param msg message to send
-      @throws XmitException if there is a schema or binding problem
-      @throws IOException if there is a socket problem
-   */
-   
-   public void send (Object msg) throws IOException, XmitException
+   @Override
+   public long send (Object msg) throws IOException, XmitException
    {
       if (log.isActiveAtLevel (Logger.Level.Trace))
-         log.trace ("=> Sending " + msg);
+         log.trace ("=> Sending app message %s", getMsgType (msg));
 
       if (! established)
          throw new XmitException ("Session not established");
 
       try
       {
-         innerSend (msg);
+         if (isIdempotent)
+            return innerSendIdemp (msg);
+         else
+         {
+            innerSend (msg);
+            return 0;
+         }
       }
       catch (BlinkException e)
       {
@@ -262,119 +230,62 @@ public final class Session implements Runnable, Client.PacketObserver
       }
    }
 
-   /**
-      Sends an application message using preceded by an Xmit:Operation
-      message to achieve exactly once semantics
-
-      @param msg message to send
-
-      @return the operation seqno assigned to the message
-      
-      @throws XmitException if there is a schema or binding problem
-      @throws IOException if there is a socket problem
-   */
-   
-   public long sendOnce (Object msg) throws IOException, XmitException
+   @Override
+   public long send (Object [] msgs) throws IOException, XmitException
    {
-      if (log.isActiveAtLevel (Logger.Level.Trace))
-         log.trace ("=> Sending " + msg);
-
-      if (! established)
-         throw new XmitException ("Session not established");
-
-      try
-      {
-         return innerSendOnce (msg);
-      }
-      catch (BlinkException e)
-      {
-         onFailedToSendAppMsg (msg, e);
-         throw new XmitException (e);
-      }
-      catch (IOException e)
-      {
-         onFailedToSendAppMsg (msg, e);
-         throw e;
-      }
+      return send (msgs, 0, msgs.length);
    }
 
-   /**
-      Sends an application message using preceded by an Xmit:Operation
-      message to achieve exactly once semantics
-
-      @param msg message to send
-      @param seqNo operation seqNo to use, must be larger than any previously
-      used seqnos on this session
-
-      @throws XmitException if there is a schema or binding problem
-      @throws IOException if there is a socket problem
-   */
-   
-   public void sendOnce (Object msg, int seqNo)
+   @Override
+   public long send (Object [] msgs, int from, int len)
       throws IOException, XmitException
    {
       if (log.isActiveAtLevel (Logger.Level.Trace))
-         log.trace ("=> Sending " + msg);
+         log.trace ("=> Sending %d app messages", msgs.length);
 
       if (! established)
          throw new XmitException ("Session not established");
 
       try
       {
-         innerSendOnce (msg, seqNo);
-      }
-      catch (XmitException e)
-      {
-         onFailedToSendAppMsg (msg, e);
-         throw e;
+         if (isIdempotent)
+            return innerSendIdemp (msgs, from, len);
+         else
+         {
+            innerSend (msgs, from, len);
+            return 0;
+         }
       }
       catch (BlinkException e)
       {
-         onFailedToSendAppMsg (msg, e);
+         onFailedToSendAppMsg (null, e);
          throw new XmitException (e);
       }
       catch (IOException e)
       {
-         onFailedToSendAppMsg (msg, e);
+         onFailedToSendAppMsg (null, e);
          throw e;
       }
    }
 
-   /**
-      Sends an array of messages
-
-      @param msgs messages to send
-      @throws XmitException if there is a schema or binding problem
-      @throws IOException if there is a socket problem
-   */
-
-   public void send (Object [] msgs) throws IOException, XmitException
-   {
-      send (msgs, 0, msgs.length);
-   }
-
-   /**
-      Sends a slice of an array of messages
-
-      @param msgs messages to send
-      @param from the index of the first message to send
-      @param len the number of objects to send
-      @throws XmitException if there is a schema or binding problem
-      @throws IOException if there is a socket problem
-   */
-
-   public void send (Object [] msgs, int from, int len)
-      throws IOException, XmitException
+   @Override
+   public long send (Iterable<?> msgs) throws IOException, XmitException
    {
       if (log.isActiveAtLevel (Logger.Level.Trace))
-         log.trace ("=> Sending " + msgs.length + " messages");
+         log.trace ("=> Sending app messages");
 
       if (! established)
          throw new XmitException ("Session not established");
 
       try
       {
-         innerSend (msgs, from, len);
+         if (isIdempotent)
+            return innerSendIdemp (msgs);
+         else
+         {
+            innerSend (msgs);
+            return 0;
+         }
       }
       catch (BlinkException e)
       {
@@ -388,48 +299,18 @@ public final class Session implements Runnable, Client.PacketObserver
       }
    }
 
-   public void send (Iterable<?> msgs) throws IOException, XmitException
-   {
-      if (log.isActiveAtLevel (Logger.Level.Trace))
-         log.trace ("=> Sending messages");
-
-      if (! established)
-         throw new XmitException ("Session not established");
-
-      try
-      {
-         innerSend (msgs);
-      }
-      catch (BlinkException e)
-      {
-         onFailedToSendAppMsg (null, e);
-         throw new XmitException (e);
-      }
-      catch (IOException e)
-      {
-         onFailedToSendAppMsg (null, e);
-         throw e;
-      }
-   }
-
-   /**
-      Returns the identifier of this session
-
-      @return a uinque identifier of this session
-    */
-   
+   @Override
    public UUID getSessionId ()
    {
       return sessionId;
    }
    
-   /** Runs the session */
-
+   @Override
    public void run ()
    {
       try
       {
-         client.readLoop ();
+         eventLoop ();
       }
       catch (Throwable e)
       {
@@ -437,11 +318,69 @@ public final class Session implements Runnable, Client.PacketObserver
       }
    }
 
-   /** Starts the client by creating a new thread */
-
+   @Override
    public void start ()
    {
       new Thread (this).start ();
+   }
+
+   @Override
+   public void stop ()
+   {
+      if (established)
+         innerTerminate ("Session stopped", null, TerminationCode.Finished);
+      log.trace ("Session stopped");
+      done = true;
+   }
+   
+   @Override
+   public void eventLoop () throws XmitException, IOException
+   {
+      try
+      {
+         while (! done)
+            receivePacket ();
+      }
+      catch (BlinkException e)
+      {
+         throw new XmitException (e);
+      }
+      finally
+      {
+         ch.close ();
+      }
+   }
+
+   private void receivePacket () throws BlinkException, IOException
+   {
+      inBb.clear ();
+      ch.receive (inBb);
+      inBb.flip ();
+      if (inBb.limit () > 0)
+      {
+         inBuf.clear ();
+         inBuf.setPos (inBb.limit ());
+         inBuf.flip ();
+         decodePacket ();
+      }
+      else
+         log.warn ("%s: Empty packet", info (ch));
+   }
+
+   private void decodePacket () throws BlinkException, IOException
+   {
+      try
+      {
+         onPacketStart ();
+         rd.read (inBuf);
+         if (! rd.isComplete ())
+            log.warn ("%s: Incomplete Blink content in packet", info (ch));
+         onPacketEnd ();
+      }
+      finally
+      {
+         rd.reset ();
+      }
    }
 
    //
@@ -461,6 +400,12 @@ public final class Session implements Runnable, Client.PacketObserver
             negotiated = true;
             cancelTimer ();
             isSeqSrv = obj.getServerFlow () == FlowType.Sequenced;
+            if (isIdempotent && ! isSeqSrv)
+            {
+               log.fatal ("Cannot use an idempotent client session with " +
+                          "a non-sequenced server, exiting");
+               done = true;
+            }
             establish ();
          }
       }
@@ -469,7 +414,7 @@ public final class Session implements Runnable, Client.PacketObserver
          if (isThisSession (obj.getSessionId ()))
             log.warn ("Ignoring negotiation response since " +
                       "already negotiated: " +
-                      "resp tsp=" + obj.getRequestTimestamp ());
+                      "req tsp: %s", nanoToStr (obj.getRequestTimestamp ()));
       }
    }
 
@@ -490,7 +435,13 @@ public final class Session implements Runnable, Client.PacketObserver
       throws XmitException
    {
       if (log.isActiveAtLevel (Logger.Level.Trace))
-         traceResponse (obj, obj.getSessionId (), obj.getRequestTimestamp ());
+      {
+         String extra = "";
+         if (obj.hasNextSeqNo ())
+            extra = String.format (", next seq no: %d", obj.getNextSeqNo ());
+         traceResponse (obj, obj.getSessionId (), obj.getRequestTimestamp (),
+                        extra);
+      }
 
       if (! established)
       {
@@ -501,10 +452,10 @@ public final class Session implements Runnable, Client.PacketObserver
             pendTerm = false;
             cancelTimer ();
 
-            serverKeepAliveInterval = obj.getKeepaliveInterval ();
+            serverKeepaliveInterval = obj.getKeepaliveInterval ();
 
             int interval =
-               Math.min (keepAliveInterval, serverKeepAliveInterval * 3);
+               Math.min (keepaliveInterval, serverKeepaliveInterval * 3);
                
             resetInterval (interval / 8, new TimerTask () {
                   public void run () { onHbtTimer (); }
@@ -521,7 +472,7 @@ public final class Session implements Runnable, Client.PacketObserver
       {
          if (isThisSession (obj.getSessionId ()))
             log.warn ("Ignoring establishment ack since already established: " +
-                      "ack tsp=" + obj.getRequestTimestamp ());
+                      "req tsp: %s", nanoToStr (obj.getRequestTimestamp ()));
       }
    }
 
@@ -547,7 +498,8 @@ public final class Session implements Runnable, Client.PacketObserver
 
    public void onSequence (Sequence obj)
    {
-      log.trace ("<= Sequence");
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("<= Sequence: next seq no: %d", obj.getNextSeqNo ());
       if (isEstablished (obj))
       {
          receivedMsg ();
@@ -575,7 +527,7 @@ public final class Session implements Runnable, Client.PacketObserver
 
    public void onPackedContext (PackedContext obj)
    {
-      if (isThisSessionCompact (obj.getSessionIdPrefix ()))
+      if (isThisSessionPacked (obj.getSessionIdPrefix ()))
       {
          if (isEstablished (obj))
          {
@@ -603,7 +555,9 @@ public final class Session implements Runnable, Client.PacketObserver
    public void onRetransmission (Retransmission obj)
    {
       if (log.isActiveAtLevel (Logger.Level.Trace))
-         traceResponse (obj, obj.getSessionId (), obj.getRequestTimestamp ());
+         traceResponse (obj, obj.getSessionId (), obj.getRequestTimestamp (),
+                        String.format (", next seq no: %d",
+                                       obj.getNextSeqNo ()));
 
       if (isValid (obj) && isEstablished (obj))
       {
@@ -658,19 +612,18 @@ public final class Session implements Runnable, Client.PacketObserver
          else
          {
             if (log.isActiveAtLevel (Logger.Level.Trace))
-               log.trace ("<= Unsequenced app msg: " +
-                          o.getClass ().getName ());
+               log.trace ("<= Unsequenced app msg: %s", getMsgType (o));
             dispatchMsg (o);
          }
       }
    }
 
-   public void onPacketStart ()
+   private void onPacketStart ()
    {
       nextActualIncomingSeqNo = 0;
    }
    
-   public void onPacketEnd ()
+   private void onPacketEnd ()
    {
       nextActualIncomingSeqNo = 0;
    }
@@ -679,8 +632,7 @@ public final class Session implements Runnable, Client.PacketObserver
    {
       if (msg != null)
          innerTerminate ("Failed to send application message: " +
-                         msg.getClass ().getName (), e,
-                         TerminationCode.UnspecifiedError);
+                         getMsgType (msg), e, TerminationCode.UnspecifiedError);
       else
          innerTerminate ("Failed to send an application message", e,
                          TerminationCode.UnspecifiedError);
@@ -698,24 +650,22 @@ public final class Session implements Runnable, Client.PacketObserver
       Object msg;
    }
 
-   public class OnceObs
+   public class OperationObs
    {
       public void onApplied (Applied msg)
       {
-         obs.onAppliedOnce (msg.getFrom (), msg.getTo ());
+         obs.onApplied (msg.getFrom (), msg.getCount ());
       }
 
       public void onNotApplied (NotApplied msg)
       {
-         obs.onNotAppliedOnce (msg.getFrom (), msg.getTo ());
+         long from = msg.getFrom ();
+         obs.onNotApplied (msg.getFrom (), msg.getCount ());
       }
    }
 
    private boolean startFrame (long nextSeqNo, String what)
    {
-      if (log.isActiveAtLevel (Logger.Level.Trace))
-         log.trace ("<= NextSeqNo: " + nextSeqNo);
-      
       if (isSeqSrv)
       {
          nextActualIncomingSeqNo = nextSeqNo;
@@ -728,9 +678,8 @@ public final class Session implements Runnable, Client.PacketObserver
                return false;
             }
             else
-               log.warn (String.format (
-                            what + " comes in too low: seqno %s < %s",
-                            nextSeqNo, nextExpectedIncomingSeqNo));
+               log.warn ("%s comes in too low: seqno %s < %s", what, nextSeqNo,
+                         nextExpectedIncomingSeqNo);
          }
       }
       else
@@ -755,8 +704,8 @@ public final class Session implements Runnable, Client.PacketObserver
       {         
          long actualSn = nextActualIncomingSeqNo ++;
          if (log.isActiveAtLevel (Logger.Level.Trace))
-            log.trace ("<= Sequenced app msg: " +
-                       msg.getClass ().getName () + ", seqNo: " + actualSn);
+            log.trace ("<= Sequenced app msg: %s, seq no: %d", getMsgType (msg),
+                       actualSn);
          
          if (actualSn == nextExpectedIncomingSeqNo)
          {
@@ -787,24 +736,28 @@ public final class Session implements Runnable, Client.PacketObserver
       if (actualSn > nextExpectedIncomingSeqNo)
       {
          if (! isRetransmit)
+         {
+            if (log.isActiveAtLevel (Logger.Level.Trace))
+               log.trace ("Enqueued out of sequence message: %s",
+                          getMsgType (msg));
             synchronized (queue)
             {
                if (queue.isEmpty ())
                   firstSeqNoInQueue = actualSn;
                queue.add (new Pending (actualSn, msg));
             }
+         }
       }
       else
-         log.warn (String.format (
-                      "Ignoring already seen message %s with seqno %s, " +
-                      "next expected seqno is %s", msg.getClass ().getName (),
-                      actualSn, nextExpectedIncomingSeqNo));
+         log.warn ("Ignoring already seen message %s with seqno %s, " +
+                   "next expected seqno is %s", getMsgType (msg), actualSn,
+                      nextExpectedIncomingSeqNo);
    }
 
    private void onMissingSequence (Object msg)
    {
       String reason = "No sequencing message seen when receiving " +
-         msg.getClass ().getName ();
+         getMsgType (msg);
       log.error (reason + ", terminating");
       innerTerminate (reason, null, TerminationCode.UnspecifiedError);
    }
@@ -828,9 +781,8 @@ public final class Session implements Runnable, Client.PacketObserver
       else
          requestedRetransmitEnd = to;
 
-      log.info (String.format ("Inbound sequence gap detected: " +
-                               "expected %s but got %s",
-                               nextExpectedIncomingSeqNo, to));
+      log.info ("Inbound sequence gap detected: expected %s but got %s",
+                nextExpectedIncomingSeqNo, to);
 
       requestRetransmit ();
    }
@@ -843,12 +795,18 @@ public final class Session implements Runnable, Client.PacketObserver
          pendRetReqs.add (tsp);
       }
 
+      int count = (int) (requestedRetransmitEnd - nextExpectedIncomingSeqNo);
+      
       RetransmitRequest rr = new RetransmitRequest ();
       rr.setSessionId (sessionIdBytes);
       rr.setTimestamp (tsp);
       rr.setFromSeqNo (nextExpectedIncomingSeqNo);
-      rr.setCount ((int) (requestedRetransmitEnd - nextExpectedIncomingSeqNo));
-
+      rr.setCount (count);
+      
+      log.info ("Requesting retransmission of %d messages " +
+                "from seq no %d (req tsp: %s)", count,
+                nextExpectedIncomingSeqNo, nanoToStr (tsp));
+      
       reRequestRetransmitAt = 0;
       
       try
@@ -894,7 +852,7 @@ public final class Session implements Runnable, Client.PacketObserver
       }
       
       if (dequeued > 0 && log.isActiveAtLevel (Logger.Level.Trace))
-         log.trace ("dequeued " + dequeued + " after retransmit complete");
+         log.trace ("Dequeued %d messages after retransmit complete", dequeued);
    }
 
    private void flushPendTerm ()
@@ -902,7 +860,7 @@ public final class Session implements Runnable, Client.PacketObserver
       if (pendTerm)
       {
          pendTerm = false;
-         innerTerminate ("peer finished sending", "finished receiving", null,
+         innerTerminate ("Peer finished sending", "finished receiving", null,
                          TerminationCode.Finished);            
       }
    }
@@ -910,7 +868,7 @@ public final class Session implements Runnable, Client.PacketObserver
    private void innerTerminate (String logReason, String sendReason,
                                 Throwable cause, TerminationCode code)
    {
-      log.trace ("=> Terminate: " + logReason);
+      log.trace ("=> Terminate: %s", logReason);
       if (established)
       {
          try
@@ -949,58 +907,77 @@ public final class Session implements Runnable, Client.PacketObserver
       innerTerminate (reason, reason, cause, code);
    }
 
-   private synchronized long innerSendOnce (Object msg)
-      throws IOException, BlinkException
-   {
-      sentMsg ();
-      int seqNo = nextOnceSeqNo ++;
-      onceOp.setSeqNo (seqNo);
-      oncePair [1] = msg;
-      client.send (oncePair);
-      oncePair [1] = null;
-      return seqNo;
-   }
-
-   private synchronized void innerSendOnce (Object msg, int seqNo)
-      throws IOException, BlinkException, XmitException
-   {
-      if (seqNo >= nextOnceSeqNo)
-         nextOnceSeqNo = seqNo + 1;
-      else
-      {
-         String reason =
-            "Operation seqno too low: " + seqNo + " < " + nextOnceSeqNo;
-         if (seqNo == 0)
-            reason += " (seqnos start from 1)";
-         throw new XmitException (reason);
-      }
-
-      sentMsg ();
-      onceOp.setSeqNo (seqNo);
-      oncePair [1] = msg;
-      client.send (oncePair);
-      oncePair [1] = null;
-   }
-
    private synchronized void innerSend (Object msg)
       throws IOException, BlinkException
    {
       sentMsg ();
-      client.send (msg);
+      wr.write (msg);
+      flush ();
    }
    
    private synchronized void innerSend (Iterable<?> msgs)
       throws IOException, BlinkException
    {
       sentMsg ();
-      client.send (msgs);
+      wr.write (msgs);
+      flush ();
    }
    
    private synchronized void innerSend (Object [] msgs, int from, int len)
       throws IOException, BlinkException
    {
       sentMsg ();
-      client.send (msgs, from, len);
+      wr.write (msgs, from, len);
+   }
+
+   private synchronized long innerSendIdemp (Object msg)
+      throws IOException, BlinkException
+   {
+      sentMsg ();
+      long sn = nextOutgoingSeqNo ++;
+      wr.write (getSeqPrefix (sn));
+      wr.write (msg);
+      flush ();
+      return sn;
+   }
+   
+   private synchronized long innerSendIdemp (Iterable<?> msgs)
+      throws IOException, BlinkException
+   {
+      sentMsg ();
+      long firstSn = nextOutgoingSeqNo;
+      nextOutgoingSeqNo = getIterableSize (msgs);
+      wr.write (getSeqPrefix (firstSn));
+      wr.write (msgs);
+      flush ();
+      return firstSn;
+   }
+   
+   private synchronized long innerSendIdemp (Object [] msgs, int from, int len)
+      throws IOException, BlinkException
+   {
+      sentMsg ();
+      long firstSn = nextOutgoingSeqNo;
+      nextOutgoingSeqNo += len;
+      wr.write (getSeqPrefix (firstSn));
+      wr.write (msgs, from, len);
+      flush ();
+      return firstSn;
+   }
+
+   private Object getSeqPrefix (long sn)
+   {
+      seqPrefix.setNextSeqNo (sn);
+      return seqPrefix;
+   }
+   
+   private void flush () throws IOException
+   {
+      outBuf.flip ();
+      outBb.limit (outBuf.size ());
+      outBb.position (0);
+      ch.write (outBb);
+      outBuf.clear ();
    }
    
    private boolean isValid (EstablishmentAck obj)
@@ -1043,13 +1020,12 @@ public final class Session implements Runnable, Client.PacketObserver
             if (pendReqs.remove (reqTsp))
                return true;
             else
-               log.warn (String.format ("Unknown %s tsp: %s", what, reqTsp));
+               log.warn ("Unknown %s tsp: %s", what, nanoToStr (reqTsp));
          }
       }
       else
-         log.warn (
-            String.format ("%s session id mismatch: expected: %s != actual: %s",
-                           what, sessionId, toUuid (snId)));
+         log.warn ("%s session id mismatch: expected: %s != actual: %s",
+                   what, sessionId, toUuid (snId));
       
       return false;
    }
@@ -1075,17 +1051,9 @@ public final class Session implements Runnable, Client.PacketObserver
       return java.util.Arrays.equals (id, sessionIdBytes);
    }
 
-   private boolean isThisSessionCompact (byte [] id)
+   private boolean isThisSessionPacked (byte [] id)
    {
-      return java.util.Arrays.equals (id, compactSessionIdBytes);
-   }
-   
-   private static UUID toUuid (byte [] bytes)
-   {
-      ByteBuffer bb = ByteBuffer.wrap (bytes);
-      long hi = bb.getLong ();
-      long lo = bb.getLong ();
-      return new UUID (hi, lo);
+      return java.util.Arrays.equals (id, packedSessionIdBytes);
    }
    
    private synchronized void cancelTimer ()
@@ -1132,13 +1100,16 @@ public final class Session implements Runnable, Client.PacketObserver
          }
 
          if (log.isActiveAtLevel (Logger.Level.Trace))
-            log.trace ("=> Negotiate (tsp " + tsp + ")");
+            log.trace ("=> Negotiate (req tsp: %s)", nanoToStr (tsp));
 
          Negotiate n = new Negotiate ();
 
          n.setSessionId (sessionIdBytes);
          n.setTimestamp (tsp);
-         n.setClientFlow (FlowType.Unsequenced);
+         if (isIdempotent)
+            n.setClientFlow (FlowType.Idempotent);
+         else
+            n.setClientFlow (FlowType.Unsequenced);
          n.setCredentials (credentials);
 
          innerSend (n);
@@ -1153,7 +1124,7 @@ public final class Session implements Runnable, Client.PacketObserver
       }
    }
 
-   private final static int EstablishTimeout = 2000; // Millisecs
+   private final static int EstablishmentTimeout = 2000; // Millisecs
    
    private void establish ()
    {
@@ -1166,18 +1137,18 @@ public final class Session implements Runnable, Client.PacketObserver
          }
 
          if (log.isActiveAtLevel (Logger.Level.Trace))
-            log.trace ("=> Establish (tsp " + tsp + ")");
+            log.trace ("=> Establish (req tsp: %s)", nanoToStr (tsp));
 
          Establish m = new Establish ();
 
          m.setSessionId (sessionIdBytes);
          m.setTimestamp (tsp);
-         m.setKeepaliveInterval (keepAliveInterval);
+         m.setKeepaliveInterval (keepaliveInterval);
          m.setCredentials (credentials);
 
          innerSend (m);
 
-         resetTimer (EstablishTimeout, new TimerTask () {
+         resetTimer (EstablishmentTimeout, new TimerTask () {
                public void run () { onEstablishmentTimedOut (); }
             });
       }
@@ -1193,19 +1164,9 @@ public final class Session implements Runnable, Client.PacketObserver
          return true;
       else
       {
-         log.warn (msg.getClass ().getName () + " received before establish");
+         log.warn (getMsgType (msg) + " received before establish");
          return false;
       }
-   }
-   
-   private static long now ()
-   {
-      return System.currentTimeMillis ();
-   }
-
-   private static long nowNano ()
-   {
-      return System.nanoTime ();
    }
    
    private void onNegotiationTimedOut ()
@@ -1221,29 +1182,35 @@ public final class Session implements Runnable, Client.PacketObserver
    {
       if (! established)
       {
-         log.warn ("No establish response, retrying");
+         log.warn ("No establishment response, retrying");
          establish ();
       }
    }
 
    private void checkServerIsAlive ()
    {
-      log.trace ("Check server is alive");
       long elapsed = now () - lastMsgReceivedTsp;
-      if (elapsed > 3 * serverKeepAliveInterval)
-         innerTerminate ("Session timed out after receiving no message in: " +
+      if (elapsed > 3 * serverKeepaliveInterval)
+         innerTerminate ("Session timed out after receiving no message in " +
                          elapsed + "ms", null, TerminationCode.Timeout);
    }
 
    private void showClientIsAlive ()
    {
-      log.trace ("Show client is alive");
       long elapsed = now () - lastMsgSentTsp;
-      if (elapsed + timerInterval >= (int)(keepAliveInterval * 0.9))
+      if (elapsed + timerInterval >= (long)(keepaliveInterval * 0.9))
          try
          {
-            log.trace ("=> UnsequencedHeartbeat");
-            innerSend (new UnsequencedHeartbeat ());
+            if (isIdempotent)
+            {
+               log.trace ("=> Sequence (Heartbeat)");
+               innerSend (getSeqPrefix (nextOutgoingSeqNo));
+            }
+            else
+            {
+               log.trace ("=> UnsequencedHeartbeat");
+               innerSend (new UnsequencedHeartbeat ());
+            }
          }
          catch (Exception e)
          {
@@ -1258,31 +1225,48 @@ public final class Session implements Runnable, Client.PacketObserver
       checkServerIsAlive ();
    }
 
-   private void traceResponse (Object msg, byte [] snId, long tsp)
+   private void traceResponse (Object msg, byte [] snId, long tsp, String extra)
    {
-      log.trace (String.format ("<= %s (snId: %s, reqTsp: %s)",
-                                msg.getClass ().getName (),
-                                toUuid (snId), tsp));
+      log.trace ("<= %s (id: %s, req tsp: %s%s)",
+                 getMsgType (msg), toUuid (snId), nanoToStr (tsp), extra);
    }
 
-   private final SessionEventObserver obs;
-   private final Client client;
+   private void traceResponse (Object msg, byte [] snId, long tsp)
+   {
+      traceResponse (msg, snId, tsp, "");
+   }
+
+   private static String getMsgType (Object o)
+   {
+      return o.getClass ().getName ();
+   }
+   
+   private final EventObserver obs;
    private final DefaultObsRegistry appRegistry;
    private final Dispatcher appDispatcher;
    private final ArrayDeque<Pending> queue;
-   private final Operation onceOp;
-   private final Object [] oncePair;
+   private final Sequence seqPrefix;
+   private final boolean isIdempotent;
    private final UUID sessionId;
    private final byte[] sessionIdBytes;
-   private final byte[] compactSessionIdBytes;
+   private final byte[] packedSessionIdBytes;
    private final HashSet<Long> pendNegReqs;
    private final HashSet<Long> pendEstReqs;
    private final HashSet<Long> pendRetReqs;
 
+   private final DatagramChannel ch;
+   private final CompactWriter wr;
+   private final CompactReader rd;
+   private final ByteBuffer inBb;
+   private final ByteBuf inBuf;
+   private final ByteBuffer outBb;
+   private final ByteBuf outBuf;
+
+   private volatile boolean done;
    private Object credentials;
    
-   private volatile int keepAliveInterval;
-   private volatile int serverKeepAliveInterval;
+   private volatile int keepaliveInterval;
+   private volatile int serverKeepaliveInterval;
    private volatile long retReqTsp;
    private volatile long lastMsgReceivedTsp;
    private volatile long lastMsgSentTsp;
@@ -1293,15 +1277,17 @@ public final class Session implements Runnable, Client.PacketObserver
    private volatile long nextActualIncomingSeqNo;
    private volatile long reRequestRetransmitAt;
    private volatile long requestedRetransmitEnd;
-   
+
+
    private TimerTask timerTask;
    private int timerInterval;
-   private static Timer timer = new Timer ("XmitSessionTimer",
+   private static Timer timer = new Timer ("XmitClientSessionTimer",
                                            true /* daemon */);
    private boolean isSeqSrv;
    private boolean pendTerm;
-   private int nextOnceSeqNo;
+   private long nextOutgoingSeqNo;
    private boolean isRetransmit;
 
-   private final Logger log = Logger.Manager.getLogger (Client.class);
+   private final Logger log =
+      Logger.Manager.getLogger (com.pantor.xmit.Client.Session.class);
 }

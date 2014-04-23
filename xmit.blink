@@ -1,4 +1,4 @@
-# xmit.blink, version 20140310-1
+# xmit.blink, version 2014007-1
 # 
 # Copyright © 2013, Pantor Engineering AB
 #
@@ -40,7 +40,7 @@ DeltaMillisecs = u32
 # are therefore left for other use by applications. There is a single exception -
 # the Sequence message is common and is therefore assigned a low type id value.
 # This session layer reserves the type id 0x01 for Sequence and the range 
-# 0x10000 to 0x10200 for other messages.
+# 0x10000 to 0x10210 for other session messages.
 
 # Any message passed after Sequence is implicitly numbered, where the first
 # message after Sequence has the sequence number NextSeqNo. An application
@@ -94,7 +94,7 @@ PackedContext/0x10051 ->
 # The response to Negotiate is one of NegotiationResponse and NegotiationReject.
 
 FlowType =
-  Sequenced | Unsequenced
+  Sequenced | Unsequenced | Idempotent
 
 Negotiate/0x10000 ->
   nanotime Timestamp,
@@ -107,7 +107,7 @@ NegotiationResponse/0x10001 ->
   Uuid SessionId,
   FlowType ServerFlow
 
-NegotiationRejectCode = Credentials | Unspecified
+NegotiationRejectCode = Credentials | Unspecified | FlowTypeNotSupported
 
 NegotiationReject/0x10002 ->
   nanotime RequestTimestamp, # Matches Negotiate.Timestamp
@@ -207,43 +207,22 @@ FinishedSending/0x10025 ->
 FinishedReceiving/0x10026 ->
   Uuid SessionId # SessionId is redundant and included only for robustness
 
-# Idempotent sequence numbering is made per underlying Xmit session, i.e. the 
-# combination of the xmit session identifier and the sequence number defines an 
-# operation to be globally unique.
-
-SeqNo = u32
-
-# Operation associates the element that follows with an operation that has
-# the identifier 'SeqNo'.
-#
-# An operation with a 'SeqNo' lower or equal to a previously applied
-# sequence number is discarded by the receiver and a NotApplied response is 
-# returned.
-
-#
-# Operation allows a non-consecutive sequence number to be processed, i.e. an
-# operation that is lost in transit will not block the processing of
-# subsequent operations. If the lost operation is carried out later,
-# the server will send a NotApplied response.
-# To successfully retry the operation, the client has to create a new operation
-# with a new sequence number and discard the lost operation that was not applied.
-
-Operation/0x10200 ->
-  SeqNo SeqNo
-
+# Idempotent operations rely on the use of implicit sequenced numbering.
+# The numbering is established in the same way as in the sequenced flow,
+# using a Sequence message.
 # The server optionally responds to the operation with a result. The application
-# message flow going in the other direction may indicate by other means
+# message flow from the server may indicate by other means
 # that an operation has been carried out. The peer may therefore decide to 
-# piggy back applied acknowledgments in application messages.
+# piggy back applied acknowledgments in application messages instead of
+# sending an Applied message
 
 Applied/0x10201 ->
-  SeqNo From,
-  SeqNo To
+  u64 From,
+  u32 Count
 
-# NotApplied specifies a range [From,To]
 NotApplied/0x10202 ->
-  SeqNo From,
-  SeqNo To
+  u64 From,
+  u32 Count
 
 #
 # Identification implementations

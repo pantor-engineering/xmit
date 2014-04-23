@@ -27,6 +27,7 @@ artifacts {
 sourceSets {
     sample {
       compileClasspath += main.output
+      compileClasspath += files('jblink.jar')
     }
 }
 
