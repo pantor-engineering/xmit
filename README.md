@@ -1,3 +1,5 @@
+**NOTE: Currently the new server functionality doesn't work properly on Windows**
+
 XMIT defines lightweight logical sessions. A session is used
 to carry application messages. XMIT is responsible for using
 the selected communications mechanism to deliver messages
