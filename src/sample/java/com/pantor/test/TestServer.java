@@ -8,8 +8,8 @@ import com.pantor.blink.Logger;
 import com.pantor.blink.ConciseLogger;
 import com.pantor.xmit.Server;
 import com.pantor.xmit.InMemoryJournal;
-import com.pantor.xmit.Server.NegotiationCtrl;
-import com.pantor.xmit.Server.EstablishmentCtrl;
+import com.pantor.xmit.Server.NegotiationRequest;
+import com.pantor.xmit.Server.EstablishmentRequest;
 import com.pantor.xmit.XmitException;
 
 public class TestServer implements Server.NegotiationObserver
@@ -38,9 +38,9 @@ public class TestServer implements Server.NegotiationObserver
          }
       }
 
-      public void onEstablish (EstablishmentCtrl e, Server.Session s)
+      public void onEstablish (EstablishmentRequest e, Server.Session s)
       {
-         log.info ("Session estblished");
+         log.info ("Session established");
       }
 
       public void onTerminate (String reason, Throwable cause, Server.Session s)
@@ -64,11 +64,11 @@ public class TestServer implements Server.NegotiationObserver
    }
 
    @Override 
-   public void onNegotiate (NegotiationCtrl ctrl, Server.Session s)
+   public void onNegotiate (NegotiationRequest req, Server.Session s)
       throws XmitException
    {
       s.addAppObserver (new Session (s));
-      ctrl.accept (new InMemoryJournal (ctrl.getSessionId ()));
+      req.accept (new InMemoryJournal (req.getSessionId ()));
    }
    
    public static void main (String... args) throws Exception

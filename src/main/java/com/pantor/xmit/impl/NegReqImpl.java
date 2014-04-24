@@ -40,9 +40,9 @@ import java.io.IOException;
 import java.net.SocketAddress;
 import com.pantor.xmit.Server.Journal;
 
-final class NegCtrlImpl implements com.pantor.xmit.Server.NegotiationCtrl
+final class NegReqImpl implements com.pantor.xmit.Server.NegotiationRequest
 {
-   NegCtrlImpl (UUID id, xmit.Negotiate req, TransportSession tsport)
+   NegReqImpl (UUID id, xmit.Negotiate req, TransportSession tsport)
    {
       this.id = id;
       this.req = req;

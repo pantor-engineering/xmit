@@ -347,11 +347,11 @@ public abstract class Server implements Runnable
             <p>Unless explicitly rejected through {@code e.reject ()},
             the establish request will be accepted.</p>
 
-            @param e an establishment controller
+            @param req an establishment request
             @param s the session
          */
       
-         void onEstablish (EstablishmentCtrl e, Session s);
+         void onEstablish (EstablishmentRequest req, Session s);
 
          /**
             Notifies the observer that the transport has been
@@ -398,11 +398,11 @@ public abstract class Server implements Runnable
    }
 
    /**
-      The negotiation control interface is used when handling requests for
-      negotiation of new logical XMIT sessions
+      The negotiation request interface provides means for accepting and
+      rejecting new logical XMIT sessions
     */
 
-   public interface NegotiationCtrl
+   public interface NegotiationRequest
    {
       /**
          Indicates that the negotiation request was accepted.
@@ -464,12 +464,12 @@ public abstract class Server implements Runnable
    }
 
    /**
-      The establishment control interface is used when handling
-      requests for establishing a new transports and binding them to a
-      logical XMIT sessions
+      The establishment request interface provides means for accepting
+      and rejecting bindings of logical XMIT sessions to new
+      transports.
     */
 
-   public interface EstablishmentCtrl
+   public interface EstablishmentRequest
    {
       /**
          Indicates that the establishment request was accepted.
@@ -561,11 +561,11 @@ public abstract class Server implements Runnable
          onNegotiate} typically initializes the session by adding
          application message observers and a session state observer.</p>
 
-         @param n a negotiation controller
+         @param req a negotiation request
          @param s the session
        */
 
-      void onNegotiate (NegotiationCtrl n, Session s)
+      void onNegotiate (NegotiationRequest req, Session s)
          throws IOException, XmitException;
    }
 

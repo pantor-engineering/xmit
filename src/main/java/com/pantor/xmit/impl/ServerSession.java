@@ -136,10 +136,10 @@ final class ServerSession implements com.pantor.xmit.Server.Session
    {
       if (! isEstablished ())
       {
-         EstCtrlImpl ctrl = new EstCtrlImpl (est, tsport);
+         EstReqImpl req = new EstReqImpl (est, tsport);
          if (eventObs != null)
-            eventObs.onEstablish (ctrl, this);
-         if (! ctrl.wasRejected ())
+            eventObs.onEstablish (req, this);
+         if (! req.wasRejected ())
          {
             // FIXME: Enable when/if implemented
             // if (obj.hasNextSeqNo ())

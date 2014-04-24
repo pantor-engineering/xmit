@@ -175,25 +175,25 @@ public class Server extends com.pantor.xmit.Server
       if (validate (neg, id, tsport))
       {
          ServerSession s = new ServerSession (id, keepaliveInterval, om);
-         NegCtrlImpl ctrl = new NegCtrlImpl (id, neg, tsport);
+         NegReqImpl req = new NegReqImpl (id, neg, tsport);
 
          try
          {
-            negObs.onNegotiate (ctrl, s);
+            negObs.onNegotiate (req, s);
          }
          catch (Exception e)
          {
             log.warn ("%s: onNegotiate: %s", info (ch), getInnerCause (e));
          }
          
-         if (ctrl.wasAccepted ())
+         if (req.wasAccepted ())
          {
-            s.setJournal (ctrl.getJournal ());
+            s.setJournal (req.getJournal ());
             acceptNewSession (neg, id, s, tsport);
          }
          else
          {
-            if (! ctrl.wasRejected ())
+            if (! req.wasRejected ())
                tsport.sendNegRej (neg,
                                   xmit.NegotiationRejectCode.Credentials,
                                   "Not authorized");

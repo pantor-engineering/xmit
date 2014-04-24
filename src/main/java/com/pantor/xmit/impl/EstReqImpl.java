@@ -38,9 +38,9 @@ package com.pantor.xmit.impl;
 import java.io.IOException;
 import java.net.SocketAddress;
 
-final class EstCtrlImpl implements com.pantor.xmit.Server.EstablishmentCtrl
+final class EstReqImpl implements com.pantor.xmit.Server.EstablishmentRequest
 {
-   EstCtrlImpl (xmit.Establish req, TransportSession tsport)
+   EstReqImpl (xmit.Establish req, TransportSession tsport)
    {
       this.req = req;
       this.tsport = tsport;
