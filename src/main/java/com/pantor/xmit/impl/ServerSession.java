@@ -295,6 +295,12 @@ final class ServerSession implements com.pantor.xmit.Server.Session
          if (useAutoApply)
             sendApplied ();
       }
+      else
+      {
+         if (log.isActiveAtLevel (Logger.Level.Trace))
+            log.trace ("=> Ignoring duplicate app message: %s, seq no %d",
+                       getMsgType (o), nextActualIncomingSeqNo);
+      }
    }
 
    private void sendNotApplied ()
