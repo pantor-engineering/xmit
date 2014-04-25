@@ -89,21 +89,23 @@ import static com.pantor.xmit.impl.Util.*;
 
 public final class ClientSession implements Client.Session
 {
+   private final static int Sec = 1000;
    private final static int PackedPrefixLen = 8;
    
    public ClientSession (DatagramChannel ch, ObjectModel om,
                          EventObserver obs, int keepaliveInterval,
-                         Client.FlowType flowType)
+                         int opTimeout, Client.FlowType flowType)
       throws IOException, XmitException
    {
       try
       {
+         this.flowType = flowType;
          this.obs = obs;
          this.keepaliveInterval = keepaliveInterval;
          this.nextOutgoingSeqNo = 1;
          this.nextActualIncomingSeqNo = 0;
          this.nextExpectedIncomingSeqNo = 1;
-         this.queue = new ArrayDeque<Pending> ();
+         this.pendIncoming = new ArrayDeque<PendMsg> ();
          this.seqPrefix = new Sequence ();
          this.pendNegReqs = new HashSet<Long> ();
          this.pendEstReqs = new HashSet<Long> ();
@@ -126,11 +128,42 @@ public final class ClientSession implements Client.Session
          this.appDispatcher = new Dispatcher (om, appRegistry);
 
          appRegistry.addObserver (new OperationObs ());
+
+         // Set the minimum operation timeout to 3 secs to have at
+         // least once second between the head and tail of the pend
+         // ops ring. This gives a lower bound of once second on the
+         // effective operation timeout
+         
+         this.opTimeout = Math.max (3 * Sec, opTimeout);
+         this.pendOpsSize = this.opTimeout / Sec;
+         this.pendOps = new PendOpRange [pendOpsSize];
+         for (int i = 0; i < pendOpsSize; ++ i)
+            pendOps [i] = new PendOpRange ();
+         this.pendResends = new ArrayDeque<PendOpRange> ();
       }
       catch (BlinkException e)
       {
          throw new XmitException (e);
       }
+   }
+
+   private static final class PendOpRange
+   {
+      PendOpRange (long tsp, long from, long end)
+      {
+         this.tsp = tsp;
+         this.from = from;
+         this.end = end;
+      }
+
+      PendOpRange ()
+      {
+         this (0, 0, 0);
+      }
+      
+      long tsp;
+      long from;
+      long end;
    }
 
    @Override
@@ -300,6 +333,101 @@ public final class ClientSession implements Client.Session
    }
 
    @Override
+   public void resend (Object msg, long seqNo) throws IOException, XmitException
+   {
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("=> Resending app message %s", getMsgType (msg));
+
+      if (! established)
+         throw new XmitException ("Session not established");
+
+      try
+      {
+         resendRequiresIdemp ();
+         innerResendIdemp (msg, seqNo);
+      }
+      catch (BlinkException e)
+      {
+         onFailedToSendAppMsg (msg, e);
+         throw new XmitException (e);
+      }
+      catch (IOException e)
+      {
+         onFailedToSendAppMsg (msg, e);
+         throw e;
+      }
+   }
+   
+   @Override
+   public void resend (Object [] msgs, long firstSeqNo)
+      throws IOException, XmitException
+   {
+      resend (msgs, 0, msgs.length, firstSeqNo);
+   }
+
+   @Override
+   public void resend (Object [] msgs, int from, int len, long firstSeqNo)
+      throws IOException, XmitException
+   {
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("=> Resending %d app messages", msgs.length);
+
+      if (! established)
+         throw new XmitException ("Session not established");
+
+      try
+      {
+         resendRequiresIdemp ();
+         innerResendIdemp (msgs, from, len, firstSeqNo);
+      }
+      catch (BlinkException e)
+      {
+         onFailedToSendAppMsg (null, e);
+         throw new XmitException (e);
+      }
+      catch (IOException e)
+      {
+         onFailedToSendAppMsg (null, e);
+         throw e;
+      }
+   }
+
+   @Override
+   public void resend (Iterable<?> msgs, long firstSeqNo)
+      throws IOException, XmitException
+   {
+      if (log.isActiveAtLevel (Logger.Level.Trace))
+         log.trace ("=> Resending app messages");
+
+      if (! established)
+         throw new XmitException ("Session not established");
+
+      try
+      {
+         resendRequiresIdemp ();
+         innerResendIdemp (msgs, firstSeqNo);
+      }
+      catch (BlinkException e)
+      {
+         onFailedToSendAppMsg (null, e);
+         throw new XmitException (e);
+      }
+      catch (IOException e)
+      {
+         onFailedToSendAppMsg (null, e);
+         throw e;
+      }
+   }
+   
+   private void resendRequiresIdemp () throws XmitException
+   {
+      if (! isIdempotent)
+         throw new XmitException (
+            String.format ("Resend can only be used with the " +
+                           "idempotent flow type: %s", flowType));
+   }
+
+   @Override
    public UUID getSessionId ()
    {
       return sessionId;
@@ -456,9 +584,20 @@ public final class ClientSession implements Client.Session
 
             int interval =
                Math.min (keepaliveInterval, serverKeepaliveInterval * 3);
-               
-            resetInterval (interval / 8, new TimerTask () {
-                  public void run () { onHbtTimer (); }
+
+            if (isIdempotent)
+               interval = Math.min (opTimeout, interval);
+
+            // Shrink the interval to an eighth to get better accuracy
+            // while being conservative so we don't send heartbeats
+            // too late. Also, make sure we run checks at least once
+            // every second to get the pend ops machinery working
+            // properly
+            
+            interval = Math.min (interval / 8, Sec);
+            
+            resetInterval (interval, new TimerTask () {
+                  public void run () { onTimer (); }
                });
 
             obs.onEstablished (this);
@@ -612,7 +751,7 @@ public final class ClientSession implements Client.Session
          else
          {
             if (log.isActiveAtLevel (Logger.Level.Trace))
-               log.trace ("<= Unsequenced app msg: %s", getMsgType (o));
+               log.trace ("<= Unsequenced app message: %s", getMsgType (o));
             dispatchMsg (o);
          }
       }
@@ -638,9 +777,9 @@ public final class ClientSession implements Client.Session
                          TerminationCode.UnspecifiedError);
    }
    
-   private static class Pending
+   private static class PendMsg
    {
-      Pending (long seqNo, Object msg)
+      PendMsg (long seqNo, Object msg)
       {
          this.seqNo = seqNo;
          this.msg = msg;
@@ -654,13 +793,18 @@ public final class ClientSession implements Client.Session
    {
       public void onApplied (Applied msg)
       {
-         obs.onApplied (msg.getFrom (), msg.getCount ());
+         long from = msg.getFrom ();
+         int count = msg.getCount ();
+         reapPendOps (from, count);
+         obs.onOperationsApplied (from, count);
       }
 
       public void onNotApplied (NotApplied msg)
       {
          long from = msg.getFrom ();
-         obs.onNotApplied (msg.getFrom (), msg.getCount ());
+         int count = msg.getCount ();
+         reapPendOps (from, count);
+         obs.onOperationsNotApplied (from, count);
       }
    }
 
@@ -704,8 +848,8 @@ public final class ClientSession implements Client.Session
       {         
          long actualSn = nextActualIncomingSeqNo ++;
          if (log.isActiveAtLevel (Logger.Level.Trace))
-            log.trace ("<= Sequenced app msg: %s, seq no: %d", getMsgType (msg),
-                       actualSn);
+            log.trace ("<= Sequenced app message: %s, seq no: %d",
+                       getMsgType (msg), actualSn);
          
          if (actualSn == nextExpectedIncomingSeqNo)
          {
@@ -714,7 +858,7 @@ public final class ClientSession implements Client.Session
 
             if (firstSeqNoInQueue != 0 &&
                 nextExpectedIncomingSeqNo >= firstSeqNoInQueue)
-               flushQueue ();
+               flushPendIncoming ();
             else
             {
                if (nextExpectedIncomingSeqNo == requestedRetransmitEnd)
@@ -740,11 +884,11 @@ public final class ClientSession implements Client.Session
             if (log.isActiveAtLevel (Logger.Level.Trace))
                log.trace ("Enqueued out of sequence message: %s",
                           getMsgType (msg));
-            synchronized (queue)
+            synchronized (pendIncoming)
             {
-               if (queue.isEmpty ())
+               if (pendIncoming.isEmpty ())
                   firstSeqNoInQueue = actualSn;
-               queue.add (new Pending (actualSn, msg));
+               pendIncoming.addLast (new PendMsg (actualSn, msg));
             }
          }
       }
@@ -820,30 +964,30 @@ public final class ClientSession implements Client.Session
       }
    }
 
-   private void flushQueue ()
+   private void flushPendIncoming ()
    {
       int dequeued = 0;
 
-      synchronized (queue)
+      synchronized (pendIncoming)
       {
-         while (! queue.isEmpty ())
+         while (! pendIncoming.isEmpty ())
          {
-            Pending pend = queue.peek ();
+            PendMsg pend = pendIncoming.peekFirst ();
             if (pend.seqNo == nextExpectedIncomingSeqNo)
             {
                ++ nextExpectedIncomingSeqNo;
                ++ dequeued;
                dispatchMsg (pend.msg);
-               queue.pop ();
+               pendIncoming.removeFirst ();
             }
             else if (pend.seqNo < nextExpectedIncomingSeqNo)
-               queue.pop ();
+               pendIncoming.removeFirst ();
             else
                break;
          }
 
-         if (! queue.isEmpty ())
-            firstSeqNoInQueue = queue.peek ().seqNo;
+         if (! pendIncoming.isEmpty ())
+            firstSeqNoInQueue = pendIncoming.peekFirst ().seqNo;
          else
          {
             firstSeqNoInQueue = 0;
@@ -935,6 +1079,7 @@ public final class ClientSession implements Client.Session
    {
       sentMsg ();
       long sn = nextOutgoingSeqNo ++;
+      pushPendOps (sn, 1);
       wr.write (getSeqPrefix (sn));
       wr.write (msg);
       flush ();
@@ -946,7 +1091,9 @@ public final class ClientSession implements Client.Session
    {
       sentMsg ();
       long firstSn = nextOutgoingSeqNo;
-      nextOutgoingSeqNo += getIterableSize (msgs);
+      int count = getIterableSize (msgs);
+      nextOutgoingSeqNo += count;
+      pushPendOps (firstSn, count);
       wr.write (getSeqPrefix (firstSn));
       wr.write (msgs);
       flush ();
@@ -959,12 +1106,140 @@ public final class ClientSession implements Client.Session
       sentMsg ();
       long firstSn = nextOutgoingSeqNo;
       nextOutgoingSeqNo += len;
+      pushPendOps (firstSn, len);
       wr.write (getSeqPrefix (firstSn));
       wr.write (msgs, from, len);
       flush ();
       return firstSn;
    }
 
+   private void allocIdempSeqNo (long seqNo, int count)
+   {
+      long next = seqNo + count;
+      if (next > nextOutgoingSeqNo)
+         nextOutgoingSeqNo = next;
+   }
+
+   private synchronized void innerResendIdemp (Object msg, long seqNo)
+      throws IOException, BlinkException
+   {
+      sentMsg ();
+      allocIdempSeqNo (seqNo, 1);
+      pushPendResendOps (seqNo, 1);
+      wr.write (getSeqPrefix (seqNo));
+      wr.write (msg);
+      flush ();
+   }
+
+   private synchronized void innerResendIdemp (Iterable<?> msgs,
+                                               long firstSeqNo)
+      throws IOException, BlinkException
+   {
+      int count = getIterableSize (msgs);
+      allocIdempSeqNo (firstSeqNo, count);
+      pushPendResendOps (firstSeqNo, count);
+      sentMsg ();
+      wr.write (getSeqPrefix (firstSeqNo));
+      wr.write (msgs);
+      flush ();
+   }
+   
+   private synchronized void innerResendIdemp (Object [] msgs, int from,
+                                               int len, long firstSeqNo)
+      throws IOException, BlinkException
+   {
+      sentMsg ();
+      allocIdempSeqNo (firstSeqNo, len);
+      pushPendResendOps (firstSeqNo, len);
+      wr.write (getSeqPrefix (firstSeqNo));
+      wr.write (msgs, from, len);
+      flush ();
+   }
+
+   private void pushPendOps (long seqNo, int count)
+   {
+      long t = now ();
+      long secs = t / 1000;
+      long normalizedTsp = secs * Sec;
+      long end = seqNo + count;
+      PendOpRange range = pendOps [(int)(secs % pendOpsSize)];
+
+      if (range.tsp != normalizedTsp) // Fresh or stale range
+      {
+         if (range.tsp != 0) // Stale
+            reportStaleOps (range);
+         range.from = seqNo;
+         range.end = end;
+         range.tsp = normalizedTsp;
+      }
+      else // Append to current range
+      {
+         assert seqNo == range.end;
+         range.end += count;
+      }
+   }
+
+   private void pushPendResendOps (long seqNo, int count)
+   {
+      pendResends.addLast (new PendOpRange (now (), seqNo, seqNo + count));
+   }
+   
+   private synchronized void reapPendOps (long from, int count)
+   {
+      long to = from + count - 1;
+      for (PendOpRange range : pendOps)
+         reapPendOpRange (from, to, range);
+
+      if (! pendResends.isEmpty ())
+         for (PendOpRange range : pendResends)
+            reapPendOpRange (from, to, range);
+   }
+
+   private boolean intersects (long from, long to, PendOpRange range)
+   {
+      return ! (to < range.from || from >= range.end);
+   }
+   
+   private void reapPendOpRange (long from, long to, PendOpRange range)
+   {
+      if (range.tsp != 0 && intersects (from, to, range))
+      {
+         if (from > range.from)
+            log.warn ("Missing ack for ops: %d ... %d", range.from, from - 1);
+         range.from = Math.min (to + 1, range.end);
+         if (range.from == range.end)
+            range.tsp = 0;
+      }
+   }
+
+   private void checkPendOpsTimeout (long now)
+   {
+      long secs = now / 1000;
+      PendOpRange range = pendOps [(int)((secs + 1) % pendOpsSize)];
+      if (range.tsp != 0)
+         reportStaleOps (range);
+
+      while (! pendResends.isEmpty ())
+      {
+         PendOpRange head = pendResends.peekFirst ();
+         long elapsed = now - head.tsp;
+         if (elapsed >= opTimeout)
+         {
+            if (head.from < head.end)
+               reportStaleOps (head);
+            pendResends.removeFirst ();
+         }
+         else
+            break;
+      }
+   }
+
+   private void reportStaleOps (PendOpRange range)
+   {
+      obs.onOperationsTimeout (range.from, (int)(range.end - range.from));
+      range.tsp = 0;
+   }
+   
    private Object getSeqPrefix (long sn)
    {
       seqPrefix.setNextSeqNo (sn);
@@ -1087,7 +1362,7 @@ public final class ClientSession implements Client.Session
       return e.toString ();
    }
 
-   private final static int NegotiateTimeout = 2000; // Millisecs
+   private final static int NegotiateTimeout = 2 * Sec;
 
    private void negotiate ()
    {
@@ -1124,7 +1399,7 @@ public final class ClientSession implements Client.Session
       }
    }
 
-   private final static int EstablishmentTimeout = 2000; // Millisecs
+   private final static int EstablishmentTimeout = 2 * Sec;
    
    private void establish ()
    {
@@ -1187,17 +1462,17 @@ public final class ClientSession implements Client.Session
       }
    }
 
-   private void checkServerIsAlive ()
+   private void checkServerIsAlive (long now)
    {
-      long elapsed = now () - lastMsgReceivedTsp;
+      long elapsed = now - lastMsgReceivedTsp;
       if (elapsed > 3 * serverKeepaliveInterval)
          innerTerminate ("Session timed out after receiving no message in " +
                          elapsed + "ms", null, TerminationCode.Timeout);
    }
 
-   private void showClientIsAlive ()
+   private void showClientIsAlive (long now)
    {
-      long elapsed = now () - lastMsgSentTsp;
+      long elapsed = now - lastMsgSentTsp;
       if (elapsed + timerInterval >= (long)(keepaliveInterval * 0.9))
          try
          {
@@ -1219,10 +1494,12 @@ public final class ClientSession implements Client.Session
          }
    }
 
-   private void onHbtTimer ()
+   private void onTimer ()
    {
-      showClientIsAlive ();
-      checkServerIsAlive ();
+      long t = now ();
+      checkPendOpsTimeout (t);
+      showClientIsAlive (t);
+      checkServerIsAlive (t);
    }
 
    private void traceResponse (Object msg, byte [] snId, long tsp, String extra)
@@ -1240,11 +1517,12 @@ public final class ClientSession implements Client.Session
    {
       return o.getClass ().getName ();
    }
-   
+
+   private final Client.FlowType flowType;
    private final EventObserver obs;
    private final DefaultObsRegistry appRegistry;
    private final Dispatcher appDispatcher;
-   private final ArrayDeque<Pending> queue;
+   private final ArrayDeque<PendMsg> pendIncoming;
    private final Sequence seqPrefix;
    private final boolean isIdempotent;
    private final UUID sessionId;
@@ -1253,6 +1531,9 @@ public final class ClientSession implements Client.Session
    private final HashSet<Long> pendNegReqs;
    private final HashSet<Long> pendEstReqs;
    private final HashSet<Long> pendRetReqs;
+   private final int pendOpsSize;
+   private final PendOpRange [] pendOps;
+   private final ArrayDeque<PendOpRange> pendResends;
 
    private final DatagramChannel ch;
    private final CompactWriter wr;
@@ -1261,11 +1542,12 @@ public final class ClientSession implements Client.Session
    private final ByteBuf inBuf;
    private final ByteBuffer outBb;
    private final ByteBuf outBuf;
+   private final int opTimeout;
+   private final int keepaliveInterval;
 
    private volatile boolean done;
    private Object credentials;
    
-   private volatile int keepaliveInterval;
    private volatile int serverKeepaliveInterval;
    private volatile long retReqTsp;
    private volatile long lastMsgReceivedTsp;
@@ -1286,6 +1568,7 @@ public final class ClientSession implements Client.Session
    private boolean isSeqSrv;
    private boolean pendTerm;
    private long nextOutgoingSeqNo;
+   private volatile long lastAckedOutgoingSeqNo;
    private boolean isRetransmit;
 
    private final Logger log =

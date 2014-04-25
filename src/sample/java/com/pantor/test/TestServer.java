@@ -21,12 +21,27 @@ public class TestServer implements Server.NegotiationObserver
          this.sn = sn;
          sn.setEventObserver (this);
       }
+
+      private final static java.util.Random rand = new java.util.Random ();
       
       public void onPing (test.Ping ping)
       {
+         int val = ping.getValue ();
+         
+         // Induce some delay to test the operation timeout functionality
+         // on the client side
+         if (rand.nextInt (100) > 80)
+            try
+            {
+               log.info ("Delaying pong %d", val);
+               Thread.sleep (3500);
+            }
+            catch (InterruptedException e)
+            {
+            }
+         
          try
          {
-            int val = ping.getValue ();
             log.info ("Got ping (%d), sending pong (%d)", val, val);
             sn.send (new test.Pong (val));
          }

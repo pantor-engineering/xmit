@@ -80,25 +80,37 @@ public class TestClient implements Session.EventObserver
       log.info ("onTerminated: " + reason);
    }
 
-   public void onApplied (long from, int count)
+   public void onOperationsApplied (long from, int count)
    {
-      if (count > 0)
+      logOpEvent ("Applied", from, count);
+   }
+
+   public void onOperationsNotApplied (long from, int count)
+   {
+      logOpEvent ("Not applied", from, count);
+   }
+   
+   public void onOperationsTimeout (long from, int count)
+   {
+      logOpEvent ("Operation timed out, resending", from, count);
+      try
       {
-         if (count > 1)
-            log.info ("Applied %d .. %d", from, from + count - 1);
-         else
-            log.info ("Applied %d", from);
+         sn.resend (new test.Ping ((int)from), from);
+      }
+      catch (Throwable e)
+      {
+         log.error (getInnerCause (e));
       }
    }
 
-   public void onNotApplied (long from, int count)
+   public void logOpEvent (String what, long from, int count)
    {
       if (count > 0)
       {
          if (count > 1)
-            log.info ("Not applied %d .. %d", from, from + count - 1);
+            log.info ("%s %d .. %d", what, from, from + count - 1);
          else
-            log.info ("Not applied %d", from);
+            log.info ("%s %d", what, from);
       }
    }
    

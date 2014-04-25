@@ -63,8 +63,8 @@ public final class Client
       @param channel a connected DatagramChannel
       @param om a Blink object model
       @param obs a session event observer
-      @param keepaliveInterval the client side keep alive interval for
-      the xmit session
+      @param keepaliveInterval the client side keep alive interval in
+      milliseconds
       @param flowType the flow type
       @throws XmitException if there is an Xmit problem
       @throws IOException if there is a socket problem
@@ -76,7 +76,33 @@ public final class Client
       throws IOException, XmitException
    {
       return new com.pantor.xmit.impl.ClientSession (
-         channel, om, obs, keepaliveInterval, flowType);
+         channel, om, obs, keepaliveInterval, keepaliveInterval, flowType);
+   }
+
+   /**
+      Creates a session that will use the specified channel.
+
+      <p>It will map messages as defined by the specified object model.</p>
+
+      @param channel a connected DatagramChannel
+      @param om a Blink object model
+      @param obs a session event observer
+      @param keepaliveInterval the client side keep alive interval in
+      milliseconds
+      @param opTimeout the timeout for idempotent operations in milliseconds,
+      the smallest effective timeout will be one second
+      @param flowType the flow type
+      @throws XmitException if there is an Xmit problem
+      @throws IOException if there is a socket problem
+   */
+      
+   public static Session createSession (
+      DatagramChannel channel, ObjectModel om, Session.EventObserver obs,
+      int keepaliveInterval, int opTimeout, FlowType flowType)
+      throws IOException, XmitException
+   {
+      return new com.pantor.xmit.impl.ClientSession (
+         channel, om, obs, keepaliveInterval, opTimeout, flowType);
    }
    
    /**
@@ -233,6 +259,71 @@ public final class Client
       long send (Iterable<?> msgs) throws IOException, XmitException;
 
       /**
+         Resends an idempotent operation
+
+         <p>This method is only applicable if the flow type is {@code
+         FlowType.Idempotent}.</p>
+
+         @param msg message to send
+         @param seqNo operation sequence number, must be a sequence number
+         of a previously sent operation
+         @throws XmitException if there is a schema or binding problem
+         @throws IOException if there is a socket problem
+      */
+   
+      void resend (Object msg, long seqNo) throws IOException, XmitException;
+
+      /**
+         Resends an array of idempotent operations
+
+         <p>This method is only applicable if the flow type is {@code
+         FlowType.Idempotent}.</p>
+
+         @param msgs messages to send
+         @param firstSeqNo operation sequence number of the first message,
+         must be a sequence number of a previously sent operation
+         @throws XmitException if there is a schema or binding problem
+         @throws IOException if there is a socket problem
+      */
+
+      void resend (Object [] msgs, long firstSeqNo)
+         throws IOException, XmitException;
+
+      /**
+         Resends a slice of an array of idempotent operations
+
+         <p>This method is only applicable if the flow type is {@code
+         FlowType.Idempotent}.</p>
+         
+         @param msgs messages to send
+         @param from the index of the first message to send
+         @param len the number of objects to send
+         @param firstSeqNo operation sequence number of the first message,
+         must be a sequence number of a previously sent operation
+         @throws XmitException if there is a schema or binding problem
+         @throws IOException if there is a socket problem
+      */
+
+      void resend (Object [] msgs, int from, int len, long firstSeqNo)
+         throws IOException, XmitException;
+
+      /**
+         Resends an iterable collection of messages
+
+         <p>This method is only applicable if the flow type is {@code
+         FlowType.Idempotent}.</p>
+
+         @param msgs the messages
+         @param firstSeqNo operation sequence number of the first message,
+         must be a sequence number of a previously sent operation
+         @throws XmitException if there is a schema or binding problem
+         @throws IOException if there is a socket problem
+      */
+
+      void resend (Iterable<?> msgs, long firstSeqNo)
+         throws IOException, XmitException;
+      
+      /**
          Returns the identifier of this session
 
          @return a uinque identifier of this session
@@ -327,17 +418,38 @@ public final class Client
             @param count the number of applied operations
          */
 
-         void onApplied (long from, int count);
+         void onOperationsApplied (long from, int count);
 
          /**
-            Called when one or more operations will not be applied by the
-            server
+            Called when one or more operations will never be applied
+            by the server.
+
+            <p>If still applicable, a client may choose to resend the
+            operations using fresh sequence numbers.</p>
 
             @param from the earliest seqno not applied
             @param count the number of not applied operations
          */
 
-         void onNotApplied (long from, int count);
+         void onOperationsNotApplied (long from, int count);
+
+         /**
+            Called when one or more operations has not been
+            acknowledged as applied by the server within a timeout
+            interval configured on the session.
+
+            <p>Note that the operations may actualy have been applied,
+            only that the acknowledgements got lost or delayed.</p>
+
+            <p>If still applicable, a client should resend the same
+            messages again using the same sequence numbers in order to
+            guarantee at most once semantics.</p>
+
+            @param from the earliest seqno timed out
+            @param count the number of timed out operations
+         */
+
+         void onOperationsTimeout (long from, int count);
       }
    }
 }
