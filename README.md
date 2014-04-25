@@ -19,4 +19,4 @@ The XMIT specification can be found at http://blinkprotocol.org.
 BUILD
 =====
 
-gradle build
+	gradle build
