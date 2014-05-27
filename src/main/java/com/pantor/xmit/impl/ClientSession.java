@@ -231,6 +231,15 @@ public final class ClientSession implements Client.Session
       else
          cancelTimer ();
    }
+
+   @Override
+   public void reset (String reason)
+   {
+      if (established)
+         terminate (reason);
+      else
+         cancelTimer ();
+   }
    
    @Override
    public long send (Object msg) throws IOException, XmitException

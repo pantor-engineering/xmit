@@ -207,6 +207,15 @@ public final class Client
       */
    
       void reset ();
+
+      /**
+         Resets the session with a reason specifier. If the session is already established, it
+         will be terminated.  If there are any ongoing negotiation or
+         establishment attempts, they will be aborted. It will however
+         retain any already achieved negotiation state.
+      */
+   
+      void reset (String reason);
    
       /**
          Sends an application message
