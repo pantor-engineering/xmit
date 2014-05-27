@@ -227,7 +227,7 @@ public final class ClientSession implements Client.Session
    public void reset ()
    {
       if (established)
-         terminate ("reset");
+         terminate ("api reset");
       else
          cancelTimer ();
    }
