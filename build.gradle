@@ -9,6 +9,13 @@ dependencies {
     testCompile 'junit:junit:4.8.2'
 }
 
+sourceSets {
+    sample {
+      compileClasspath += main.output
+      compileClasspath += files('jblink.jar')
+    }
+}
+
 task sourcesJar (type: Jar, dependsOn: classes) {
     classifier = 'sources'
     from sourceSets.main.allSource
@@ -19,17 +26,16 @@ task javadocJar (type: Jar, dependsOn: javadoc) {
     from javadoc.destinationDir
 }
 
+task sampleJar (type: Jar, dependsOn: sampleClasses) {
+   classifier = 'sample'
+   from sourceSets.sample.output
+}
+
 artifacts {
     archives sourcesJar
     archives javadocJar
 }
 
-sourceSets {
-    sample {
-      compileClasspath += main.output
-      compileClasspath += files('jblink.jar')
-    }
-}
 
 // This will prevent the compiler from complaining about the use of
 // sun.misc.Unsafe
