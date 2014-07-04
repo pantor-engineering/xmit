@@ -10,6 +10,7 @@ import com.pantor.xmit.Client;
 import com.pantor.xmit.Client.Session;
 import java.net.InetSocketAddress;
 import java.nio.channels.DatagramChannel;
+import xmit.StringIdentification;
 
 public class TestClient implements Session.EventObserver
 {
@@ -125,7 +126,9 @@ public class TestClient implements Session.EventObserver
       c.sn = Client.createSession (ch, om, c, Keepalive,
                                    Client.FlowType.Idempotent);
       c.sn.addAppObserver (c);
-      c.sn.initiate ();
+      StringIdentification credentials = new StringIdentification ();
+      credentials.setIdentity ("TestClient");
+      c.sn.initiate (credentials);
       c.sn.start ();
       log.info ("Started client session");
    }
