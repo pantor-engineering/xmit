@@ -243,17 +243,21 @@ public class Server extends com.pantor.xmit.Server
    {
       UUID id = Util.toUuid (est.getSessionId ());
       ServerSession s = sessionMap.get (id);
-      if (s != null && s.establish (est, tsport))
-      { 
-        tsport.updateTimeout ((int) (s.getKeepaliveInterval () * 0.9));
-        return s;
+      if (s != null)
+      {
+         if (s.establish (est, tsport))
+         { 
+            tsport.updateTimeout ((int) (s.getKeepaliveInterval () * 0.9));
+            return s;
+         }
       }
       else
       {
          tsport.sendEstRej (est, xmit.EstablishmentRejectCode.Unnegotiated,
                             "Not negotiated");
-         return null;
       }
+      
+      return null;
    }
 
    ObjectModel getObjectModel ()
