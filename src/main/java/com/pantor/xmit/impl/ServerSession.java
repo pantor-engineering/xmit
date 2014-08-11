@@ -644,6 +644,11 @@ final class ServerSession implements com.pantor.xmit.Server.Session
       showServerIsAlive (timeout);
    }
       
+   public void onTransportLost (String reason, Throwable cause)
+   {
+      innerTerminate (reason, cause, xmit.TerminationCode.UnspecifiedError);
+   }
+
    private void checkClientIsAlive ()
    {
       long elapsed = now () - lastPacketReceivedTsp;

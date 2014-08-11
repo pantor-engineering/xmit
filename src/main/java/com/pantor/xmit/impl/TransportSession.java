@@ -133,13 +133,19 @@ public final class TransportSession implements Runnable
                {
                   log.warn ("%s: Peer is unreachable, terminating transport " +
                             "session", info (ch));
-                  return;
+                  ServerSession s = xmitSession;
+                  if (s != null)
+                     s.onTransportLost ("Port unreachable", e);
+                  done = true;
                }
                catch (Throwable e)
                {
                   log.warn (e, "%s: Terminating transport session: %s",
                             info (ch), getInnerCause (e));
-                  return;
+                  ServerSession s = xmitSession;
+                  if (s != null)
+                     s.onTransportLost (getInnerCause (e), e);
+                  done = true;
                }
             else
                handleTimeout ();
