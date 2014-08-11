@@ -131,7 +131,7 @@ public final class TransportSession implements Runnable
                }
                catch (java.net.PortUnreachableException e)
                {
-                  log.warn ("%s: Peer is unreachable, terminating transport " +
+                  log.warn ("%s: Port is unreachable, terminating transport " +
                             "session", info (ch));
                   ServerSession s = xmitSession;
                   if (s != null)
