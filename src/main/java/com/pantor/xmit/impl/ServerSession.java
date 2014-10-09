@@ -306,7 +306,7 @@ final class ServerSession implements com.pantor.xmit.Server.Session
    private void sendNotApplied ()
    {
       int count = (int)(nextActualIncomingSeqNo - nextExpectedIncomingSeqNo);
-      notAppliedMsg.setFrom (nextExpectedIncomingSeqNo);
+      notAppliedMsg.setFromSeqNo (nextExpectedIncomingSeqNo);
       notAppliedMsg.setCount (count);
       try
       {
@@ -326,7 +326,7 @@ final class ServerSession implements com.pantor.xmit.Server.Session
    private void sendApplied ()
    {
       long sn = nextExpectedIncomingSeqNo - 1;
-      appliedMsg.setFrom (sn);
+      appliedMsg.setFromSeqNo (sn);
 
       try
       {

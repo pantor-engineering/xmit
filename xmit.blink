@@ -217,11 +217,11 @@ FinishedReceiving/0x10026 ->
 # sending an Applied message
 
 Applied/0x10201 ->
-  u64 From,
+  u64 FromSeqNo,
   u32 Count
 
 NotApplied/0x10202 ->
-  u64 From,
+  u64 FromSeqNo,
   u32 Count
 
 #

@@ -802,7 +802,7 @@ public final class ClientSession implements Client.Session
    {
       public void onApplied (Applied msg)
       {
-         long from = msg.getFrom ();
+         long from = msg.getFromSeqNo ();
          int count = msg.getCount ();
          reapPendOps (from, count);
          obs.onOperationsApplied (from, count);
@@ -810,7 +810,7 @@ public final class ClientSession implements Client.Session
 
       public void onNotApplied (NotApplied msg)
       {
-         long from = msg.getFrom ();
+         long from = msg.getFromSeqNo ();
          int count = msg.getCount ();
          reapPendOps (from, count);
          obs.onOperationsNotApplied (from, count);

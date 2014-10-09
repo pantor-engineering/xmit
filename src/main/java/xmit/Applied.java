@@ -4,12 +4,12 @@ package xmit;
 
 public class Applied
 {
-  public long getFrom () { return m_From; }
-  public void setFrom (long v) { m_From = v; }
+  public long getFromSeqNo () { return m_FromSeqNo; }
+  public void setFromSeqNo (long v) { m_FromSeqNo = v; }
   public int getCount () { return m_Count; }
   public void setCount (int v) { m_Count = v; }
   
-  private long m_From;
+  private long m_FromSeqNo;
   private int m_Count;
 }
 
