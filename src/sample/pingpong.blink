@@ -1,7 +1,8 @@
 namespace Test
 
 Ping/10 ->
-  u32 Value
+  u32 Value,
+  u32 PongCount
 
 Pong/11 ->
   u32 Value

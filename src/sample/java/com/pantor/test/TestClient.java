@@ -16,7 +16,15 @@ public class TestClient implements Session.EventObserver
 {
    private final static int Sec = 1000;
    private final static int Keepalive = 2 * Sec;
-   
+
+   private static test.Ping makePing (int val, int count)
+   {
+      test.Ping ping = new test.Ping ();
+      ping.setValue (val);
+      ping.setPongCount (count);
+      return ping;
+   }
+
    public void onPong (test.Pong pong)
    {
       try
@@ -24,7 +32,7 @@ public class TestClient implements Session.EventObserver
          int val = pong.getValue ();
          log.info ("Got pong (%d), sending ping (%d)", val, val + 1);
          Thread.sleep (1000);
-         long seqNo = sn.send (new test.Ping (val + 1));
+         long seqNo = sn.send (makePing (val + 1, 1));
          log.info ("  Sent ping with seqNo: %d", seqNo);
       }
       catch (Throwable e)
@@ -39,7 +47,7 @@ public class TestClient implements Session.EventObserver
       log.info ("Sending first ping (1)");
       try
       {
-         sn.send (new test.Ping (1));
+         sn.send (makePing (1, 1));
       }
       catch (Throwable e)
       {
@@ -96,7 +104,7 @@ public class TestClient implements Session.EventObserver
       logOpEvent ("Operation timed out, resending", from, count);
       try
       {
-         sn.resend (new test.Ping ((int)from), from);
+         sn.resend (makePing ((int)from, 1), from);
       }
       catch (Throwable e)
       {

@@ -27,6 +27,7 @@ public class TestServer implements Server.NegotiationObserver
       public void onPing (test.Ping ping)
       {
          int val = ping.getValue ();
+         int pongCount = ping.getPongCount ();
          
          // Induce some delay to test the operation timeout functionality
          // on the client side
@@ -42,8 +43,13 @@ public class TestServer implements Server.NegotiationObserver
          
          try
          {
-            log.info ("Got ping (%d), sending pong (%d)", val, val);
-            sn.send (new test.Pong (val));
+            log.info ("Got ping (%d), sending (%d) pong messages starting from (%d)", val, pongCount, val);
+            for (int i = 0; i < pongCount; ++ i)
+            {
+               test.Pong p = new test.Pong ();
+               p.setValue (val ++);
+               sn.send (p);
+            }
          }
          catch (Throwable e)
          {
