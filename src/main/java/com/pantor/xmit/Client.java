@@ -43,6 +43,7 @@ import com.pantor.blink.BlinkException;
 import java.io.IOException;
 import java.util.UUID;
 import java.nio.channels.DatagramChannel;
+import java.nio.channels.SocketChannel;
 
 public final class Client
 {
@@ -56,7 +57,7 @@ public final class Client
    }
    
    /**
-      Creates a session that will use the specified channel.
+      Creates a session that will use the specified datagram channel.
 
       <p>It will map messages as defined by the specified object model.</p>
 
@@ -80,7 +81,7 @@ public final class Client
    }
 
    /**
-      Creates a session that will use the specified channel.
+      Creates a session that will use the specified datagram channel.
 
       <p>It will map messages as defined by the specified object model.</p>
 
@@ -106,7 +107,7 @@ public final class Client
    }
    
    /**
-      Creates a session that will use the specified socket.
+      Creates a session that will use the specified datagram channel.
 
       <p>It will map messages as defined by the specified schemas.</p>
 
@@ -135,6 +136,87 @@ public final class Client
       }
    }
 
+   /**
+      Creates a session that will use the specified channel.
+
+      <p>It will map messages as defined by the specified object model.</p>
+
+      @param channel a connected SocketChannel
+      @param om a Blink object model
+      @param obs a session event observer
+      @param keepaliveInterval the client side keep alive interval in
+      milliseconds
+      @param flowType the flow type
+      @throws XmitException if there is an Xmit problem
+      @throws IOException if there is a socket problem
+   */
+      
+   public static Session createSession (
+      SocketChannel channel, ObjectModel om, Session.EventObserver obs,
+      int keepaliveInterval, FlowType flowType)
+      throws IOException, XmitException
+   {
+      return new com.pantor.xmit.impl.ClientSession (
+         channel, om, obs, keepaliveInterval, keepaliveInterval, flowType);
+   }
+
+   /**
+      Creates a session that will use the specified channel.
+
+      <p>It will map messages as defined by the specified object model.</p>
+
+      @param channel a connected SocketChannel
+      @param om a Blink object model
+      @param obs a session event observer
+      @param keepaliveInterval the client side keep alive interval in
+      milliseconds
+      @param opTimeout the timeout for idempotent operations in milliseconds,
+      the smallest effective timeout will be one second
+      @param flowType the flow type
+      @throws XmitException if there is an Xmit problem
+      @throws IOException if there is a socket problem
+   */
+      
+   public static Session createSession (
+      SocketChannel channel, ObjectModel om, Session.EventObserver obs,
+      int keepaliveInterval, int opTimeout, FlowType flowType)
+      throws IOException, XmitException
+   {
+      return new com.pantor.xmit.impl.ClientSession (
+         channel, om, obs, keepaliveInterval, opTimeout, flowType);
+   }
+   
+   /**
+      Creates a session that will use the specified channel.
+
+      <p>It will map messages as defined by the specified schemas.</p>
+
+      @param channel a connected SocketChannel
+      @param schemas an array of Blink schema file names
+      @param obs a session event observer
+      @param keepaliveInterval the client side keep alive interval for
+      the xmit session
+      @throws XmitException if there is an Xmit problem
+      @throws IOException if there is a socket problem
+   */
+      
+   public static Session createSession (
+      SocketChannel channel, String [] schemas,
+      Session.EventObserver obs, int keepaliveInterval, FlowType flowType)
+      throws IOException, XmitException
+   {
+      try
+      {
+         return createSession (channel, new DefaultObjectModel (schemas), obs,
+                               keepaliveInterval, flowType);
+      }
+      catch (BlinkException e)
+      {
+         throw new XmitException (e);
+      }
+   }
+
+   
    public interface Session extends Runnable
    {
       /**

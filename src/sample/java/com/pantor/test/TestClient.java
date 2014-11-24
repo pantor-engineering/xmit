@@ -10,6 +10,7 @@ import com.pantor.xmit.Client;
 import com.pantor.xmit.Client.Session;
 import java.net.InetSocketAddress;
 import java.nio.channels.DatagramChannel;
+import java.nio.channels.SocketChannel;
 import xmit.StringIdentification;
 
 public class TestClient implements Session.EventObserver
@@ -129,10 +130,24 @@ public class TestClient implements Session.EventObserver
       String [] parts = args [2].split (":");
       InetSocketAddress a =
          new InetSocketAddress (parts [0], Integer.parseInt (parts [1]));
-      DatagramChannel ch = DatagramChannel.open ().connect (a);
+
+      
       TestClient c = new TestClient ();
-      c.sn = Client.createSession (ch, om, c, Keepalive,
-                                   Client.FlowType.Idempotent);
+
+      if (args.length > 3 && args [3].equals ("tcp"))
+      {
+         SocketChannel ch = SocketChannel.open ();
+         ch.socket ().connect (a);
+         c.sn = Client.createSession (ch, om, c, Keepalive,
+                                      Client.FlowType.Idempotent);
+      }
+      else
+      {
+         DatagramChannel ch = DatagramChannel.open ().connect (a);
+         c.sn = Client.createSession (ch, om, c, Keepalive,
+                                      Client.FlowType.Idempotent);
+      }
+         
       c.sn.addAppObserver (c);
       StringIdentification credentials = new StringIdentification ();
       credentials.setIdentity ("TestClient");

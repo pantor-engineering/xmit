@@ -36,9 +36,9 @@
 package com.pantor.xmit.impl;
 
 import java.io.IOException;
-import java.net.DatagramSocket;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
+import java.nio.channels.SocketChannel;
 import java.nio.ByteOrder;
 import java.lang.Math;
 import java.util.UUID;
@@ -91,10 +91,163 @@ public final class ClientSession implements Client.Session
 {
    private final static int Sec = 1000;
    private final static int PackedPrefixLen = 8;
+
+   private abstract class Transport
+   {
+      abstract void run () throws XmitException, IOException;
+      abstract void flush () throws IOException;
+   }
    
-   public ClientSession (DatagramChannel ch, ObjectModel om,
-                         EventObserver obs, int keepaliveInterval,
-                         int opTimeout, Client.FlowType flowType)
+   private final class StreamTransport extends Transport
+   {
+      StreamTransport (SocketChannel ch)
+      {
+         this.ch = ch;
+         this.inBb = ByteBuffer.allocate (4096);
+         this.inBuf = new ByteBuf (inBb.array (), 0, inBb.limit ());
+      }
+      
+      @Override
+      void run () throws XmitException, IOException
+      {
+         try
+         {
+            while (! done)
+               readChunk ();
+
+            if (! rd.isComplete ())
+               log.warn ("%s: Incomplete Blink content at end of stream",
+                         info (ch));
+         }
+         catch (BlinkException e)
+         {
+            throw new XmitException (e);
+         }
+         finally
+         {
+            ch.close ();
+         }
+      }
+
+      @Override
+      void flush () throws IOException
+      {
+         outBuf.flip ();
+         ch.write (outBuf.getByteBuffer ());
+         outBuf.clear ();
+      }
+   
+      private void readChunk () throws BlinkException, IOException
+      {
+         inBb.clear ();
+         ch.read (inBb);
+         inBb.flip ();
+         if (inBb.limit () > 0)
+         {
+            inBuf.clear ();
+            inBuf.setPos (inBb.limit ());
+            inBuf.flip ();
+            rd.read (inBuf);
+         }
+      }
+
+      private final SocketChannel ch;
+      private final ByteBuffer inBb;
+      private final ByteBuf inBuf;
+   }
+
+   private final class DatagramTransport extends Transport
+   {
+      DatagramTransport (DatagramChannel ch)
+      {
+         this.ch = ch;
+         this.inBb = ByteBuffer.allocate (1500);
+         this.inBuf = new ByteBuf (inBb.array (), 0, inBb.limit ());
+      }
+      
+      @Override
+      void run () throws XmitException, IOException
+      {
+         try
+         {
+            while (! done)
+               receivePacket ();
+         }
+         catch (BlinkException e)
+         {
+            throw new XmitException (e);
+         }
+         finally
+         {
+            ch.close ();
+         }
+      }
+
+      @Override
+      void flush () throws IOException
+      {
+         outBuf.flip ();
+         outBb.limit (outBuf.size ());
+         outBb.position (0);
+         ch.write (outBb);
+         outBuf.clear ();
+      }
+   
+      private void receivePacket () throws BlinkException, IOException
+      {
+         inBb.clear ();
+         ch.receive (inBb);
+         inBb.flip ();
+         if (inBb.limit () > 0)
+         {
+            inBuf.clear ();
+            inBuf.setPos (inBb.limit ());
+            inBuf.flip ();
+            decodePacket ();
+         }
+         else
+            log.warn ("%s: Empty packet", info (ch));
+      }
+
+      private void decodePacket () throws BlinkException, IOException
+      {
+         try
+         {
+            onPacketStart ();
+            rd.read (inBuf);
+            if (! rd.isComplete ())
+               log.warn ("%s: Incomplete Blink content in packet", info (ch));
+            onPacketEnd ();
+         }
+         finally
+         {
+            rd.reset ();
+         }
+      }
+      
+      private void onPacketStart ()
+      {
+         nextActualIncomingSeqNo = 0;
+      }
+   
+      private void onPacketEnd ()
+      {
+         nextActualIncomingSeqNo = 0;
+      }
+
+      private final DatagramChannel ch;
+      private final ByteBuffer inBb;
+      private final ByteBuf inBuf;
+   }
+
+   public enum TransportType
+   {
+      Datagram, Stream
+   }
+   
+   private ClientSession (TransportType transportType, ObjectModel om,
+                          EventObserver obs, int keepaliveInterval,
+                          int opTimeout, Client.FlowType flowType)
       throws IOException, XmitException
    {
       try
@@ -114,16 +267,23 @@ public final class ClientSession implements Client.Session
          this.sessionIdBytes = toBytes (sessionId);
          this.packedSessionIdBytes =
             Arrays.copyOfRange (sessionIdBytes, 0, PackedPrefixLen);
-         this.inBb = ByteBuffer.allocate (1500);
-         this.inBuf = new ByteBuf (inBb.array (), 0, inBb.limit ());
          DefaultObsRegistry oreg = new DefaultObsRegistry (om);
          oreg.addObserver (this);
+
+         if (transportType == TransportType.Datagram)
+         {
+            this.outBb = ByteBuffer.allocate (1500);
+            this.outBuf = new ByteBuf (outBb.array ());
+         }
+         else
+         {
+            this.outBb = null;
+            this.outBuf = new ByteBuf (4096);
+         }
+         
          this.rd = new CompactReader (om, oreg);
-         this.outBb = ByteBuffer.allocate (1500);
-         this.outBuf = new ByteBuf (outBb.array ());
          this.wr = new CompactWriter (om, outBuf);
          this.isIdempotent = flowType == Client.FlowType.Idempotent;
-         this.ch = ch;
          this.appRegistry = new DefaultObsRegistry (om);
          this.appDispatcher = new Dispatcher (om, appRegistry);
 
@@ -145,6 +305,26 @@ public final class ClientSession implements Client.Session
       {
          throw new XmitException (e);
       }
+   }
+
+   public ClientSession (DatagramChannel ch, ObjectModel om,
+                         EventObserver obs, int keepaliveInterval,
+                         int opTimeout, Client.FlowType flowType)
+      throws IOException, XmitException
+   {
+      this (TransportType.Datagram, om, obs, keepaliveInterval, opTimeout,
+            flowType);
+      tsport = new DatagramTransport (ch);
+   }
+
+   public ClientSession (SocketChannel ch, ObjectModel om,
+                         EventObserver obs, int keepaliveInterval,
+                         int opTimeout, Client.FlowType flowType)
+      throws IOException, XmitException
+   {
+      this (TransportType.Stream, om, obs, keepaliveInterval, opTimeout,
+            flowType);
+      tsport = new StreamTransport (ch);
    }
 
    private static final class PendOpRange
@@ -473,53 +653,9 @@ public final class ClientSession implements Client.Session
    @Override
    public void eventLoop () throws XmitException, IOException
    {
-      try
-      {
-         while (! done)
-            receivePacket ();
-      }
-      catch (BlinkException e)
-      {
-         throw new XmitException (e);
-      }
-      finally
-      {
-         ch.close ();
-      }
+      tsport.run ();
    }
-
-   private void receivePacket () throws BlinkException, IOException
-   {
-      inBb.clear ();
-      ch.receive (inBb);
-      inBb.flip ();
-      if (inBb.limit () > 0)
-      {
-         inBuf.clear ();
-         inBuf.setPos (inBb.limit ());
-         inBuf.flip ();
-         decodePacket ();
-      }
-      else
-         log.warn ("%s: Empty packet", info (ch));
-   }
-
-   private void decodePacket () throws BlinkException, IOException
-   {
-      try
-      {
-         onPacketStart ();
-         rd.read (inBuf);
-         if (! rd.isComplete ())
-            log.warn ("%s: Incomplete Blink content in packet", info (ch));
-         onPacketEnd ();
-      }
-      finally
-      {
-         rd.reset ();
-      }
-   }
-
+   
    //
    // Observer methods
    //
@@ -770,16 +906,6 @@ public final class ClientSession implements Client.Session
       }
    }
 
-   private void onPacketStart ()
-   {
-      nextActualIncomingSeqNo = 0;
-   }
-   
-   private void onPacketEnd ()
-   {
-      nextActualIncomingSeqNo = 0;
-   }
-   
    private void onFailedToSendAppMsg (Object msg, Throwable e)
    {
       if (msg != null)
@@ -1087,7 +1213,7 @@ public final class ClientSession implements Client.Session
    {
       sentMsg ();
       wr.write (msg);
-      flush ();
+      tsport.flush ();
    }
    
    private synchronized void innerSend (Iterable<?> msgs)
@@ -1095,7 +1221,7 @@ public final class ClientSession implements Client.Session
    {
       sentMsg ();
       wr.write (msgs);
-      flush ();
+      tsport.flush ();
    }
    
    private synchronized void innerSend (Object [] msgs, int from, int len)
@@ -1113,7 +1239,7 @@ public final class ClientSession implements Client.Session
       pushPendOps (sn, 1);
       wr.write (getSeqPrefix (sn));
       wr.write (msg);
-      flush ();
+      tsport.flush ();
       return sn;
    }
    
@@ -1127,7 +1253,7 @@ public final class ClientSession implements Client.Session
       pushPendOps (firstSn, count);
       wr.write (getSeqPrefix (firstSn));
       wr.write (msgs);
-      flush ();
+      tsport.flush ();
       return firstSn;
    }
    
@@ -1140,7 +1266,7 @@ public final class ClientSession implements Client.Session
       pushPendOps (firstSn, len);
       wr.write (getSeqPrefix (firstSn));
       wr.write (msgs, from, len);
-      flush ();
+      tsport.flush ();
       return firstSn;
    }
 
@@ -1159,7 +1285,7 @@ public final class ClientSession implements Client.Session
       pushPendResendOps (seqNo, 1);
       wr.write (getSeqPrefix (seqNo));
       wr.write (msg);
-      flush ();
+      tsport.flush ();
    }
 
    private synchronized void innerResendIdemp (Iterable<?> msgs,
@@ -1172,7 +1298,7 @@ public final class ClientSession implements Client.Session
       sentMsg ();
       wr.write (getSeqPrefix (firstSeqNo));
       wr.write (msgs);
-      flush ();
+      tsport.flush ();
    }
    
    private synchronized void innerResendIdemp (Object [] msgs, int from,
@@ -1184,7 +1310,7 @@ public final class ClientSession implements Client.Session
       pushPendResendOps (firstSeqNo, len);
       wr.write (getSeqPrefix (firstSeqNo));
       wr.write (msgs, from, len);
-      flush ();
+      tsport.flush ();
    }
 
    private void pushPendOps (long seqNo, int count)
@@ -1275,15 +1401,6 @@ public final class ClientSession implements Client.Session
    {
       seqPrefix.setNextSeqNo (sn);
       return seqPrefix;
-   }
-   
-   private void flush () throws IOException
-   {
-      outBuf.flip ();
-      outBb.limit (outBuf.size ());
-      outBb.position (0);
-      ch.write (outBb);
-      outBuf.clear ();
    }
    
    private boolean isValid (EstablishmentAck obj)
@@ -1549,6 +1666,8 @@ public final class ClientSession implements Client.Session
       return o.getClass ().getName ();
    }
 
+   private final ByteBuffer outBb;
+   private final ByteBuf outBuf;
    private final Client.FlowType flowType;
    private final EventObserver obs;
    private final DefaultObsRegistry appRegistry;
@@ -1566,15 +1685,12 @@ public final class ClientSession implements Client.Session
    private final PendOpRange [] pendOps;
    private final ArrayDeque<PendOpRange> pendResends;
 
-   private final DatagramChannel ch;
    private final CompactWriter wr;
    private final CompactReader rd;
-   private final ByteBuffer inBb;
-   private final ByteBuf inBuf;
-   private final ByteBuffer outBb;
-   private final ByteBuf outBuf;
    private final int opTimeout;
    private final int keepaliveInterval;
+
+   private Transport tsport;
 
    private volatile boolean done;
    private Object credentials;

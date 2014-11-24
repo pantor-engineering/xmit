@@ -47,10 +47,16 @@ import java.net.StandardSocketOptions;
 import java.net.InetSocketAddress;
 
 import java.nio.channels.DatagramChannel;
+import java.nio.channels.SocketChannel;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.Selector;
+import java.nio.channels.SelectionKey;
 import java.nio.ByteBuffer;
 
 import java.util.HashMap;
 import java.util.UUID;
+import java.util.Set;
+import java.util.Iterator;
 
 import static com.pantor.xmit.impl.Util.*;
 
@@ -70,7 +76,16 @@ public class Server extends com.pantor.xmit.Server
       this.om = om;
       this.negObs = negObs;
       this.port = 0;
-      this.ch = ch;
+      this.dgmCh = ch;
+   }
+
+   public Server (ServerSocketChannel ch, ObjectModel om,
+                  NegotiationObserver negObs)
+   {
+      this.om = om;
+      this.negObs = negObs;
+      this.port = 0;
+      this.acceptCh = ch;
    }
 
    @Override
@@ -85,62 +100,127 @@ public class Server extends com.pantor.xmit.Server
    @Override
    public void mainLoop () throws XmitException, IOException
    {
-      if (ch == null)
+      if (dgmCh == null)
       {
          if (port > 0)
          {
-            ch =
+            dgmCh =
                DatagramChannel.open ()
                .setOption (StandardSocketOptions.SO_REUSEADDR, true);
-            
-            ch.bind (new InetSocketAddress (port));
+            dgmCh.bind (new InetSocketAddress (port));
          }
          else
-            throw new IllegalArgumentException (
-               "Datagram channel is null and the port number i zero");
+         {
+            if (acceptCh == null)
+               throw new IllegalArgumentException (
+                  "Datagram and socket channels are null and " +
+                  "the port number i zero");
+         }
       }
 
+      if (acceptCh == null && port > 0)
+      {
+         acceptCh = ServerSocketChannel.open ();
+         acceptCh.socket ().bind (new InetSocketAddress (port));
+      }
+
+      if (dgmCh != null)
+         dgmCh.configureBlocking (false);
+
+      if (acceptCh != null)
+         acceptCh.configureBlocking (false);
+      
       // FIXME: This implementation has a decidedly simplistic
       // threading model. At least there should be something limiting
       // a storm of incoming packets to generate an excessive amount
       // of threads
       
-      ByteBuffer bb = ByteBuffer.allocate (1500);
+      Selector selector = Selector.open ();
+      if (dgmCh != null)
+         dgmCh.register (selector, SelectionKey.OP_READ);
+      if (acceptCh != null)
+         acceptCh.register (selector, SelectionKey.OP_ACCEPT);
+
       for (;;)
       {
-         SocketAddress a = ch.receive (bb);
-         log.info ("Received initial datagram from " + a);
-         bb.flip ();
-         if (bb.limit () > 0)
+         int n = selector.select ();
+         if (n > 0)
          {
-            DatagramChannel tsportCh =
-               DatagramChannel.open ()
-               .setOption (StandardSocketOptions.SO_REUSEADDR, true)
-               .bind (ch.getLocalAddress ())
-               .connect (a);
-
-            tsportCh.configureBlocking (false);
-
-            try
+            Set<SelectionKey> keys = selector.selectedKeys ();
+            Iterator<SelectionKey> i = keys.iterator();
+            while (i.hasNext ())
             {
-               TransportSession tsport =
-                  new TransportSession (tsportCh, bb, this);
-               bb = ByteBuffer.allocate (1500);
-               new Thread (tsport).start ();
+               SelectionKey k = i.next ();
+               i.remove();
+               if (k.isAcceptable ())
+                  acceptConnection ();
+               else
+               {
+                  if (k.isReadable ())
+                     receivePacket ();
+               }
             }
-            catch (BlinkException e)
-            {
-               throw new XmitException (e);
-            }
-         }
-         else
-         {
-            bb.clear ();
-            log.warn ("%s: Empty initial packet from %s", info (ch), a);
          }
       }
    }
 
+   private void receivePacket () throws IOException, XmitException
+   {
+      ByteBuffer bb = ByteBuffer.allocate (1500);
+      SocketAddress a = dgmCh.receive (bb);
+      log.info ("Received initial datagram from " + a);
+      bb.flip ();
+      if (bb.limit () > 0)
+      {
+         DatagramChannel tsportCh =
+            DatagramChannel.open ()
+            .setOption (StandardSocketOptions.SO_REUSEADDR, true)
+            .bind (dgmCh.getLocalAddress ())
+            .connect (a);
+
+         tsportCh.configureBlocking (false);
+
+         try
+         {
+            new Thread (new DatagramTransportSession (tsportCh, bb,
+                                                      this)).start ();
+         }
+         catch (BlinkException e)
+         {
+            throw new XmitException (e);
+         }
+      }
+      else
+         log.warn ("%s: Empty initial packet from %s", info (dgmCh), a);
+   }
+
+   private void acceptConnection () throws IOException, XmitException
+   {
+      SocketChannel socket = acceptCh.accept ();
+      socket.configureBlocking (false);
+
+      log.info ("Acceped connection from " + socket.getRemoteAddress ());
+      
+      try
+      {
+         new Thread (new StreamTransportSession (socket, this)).start ();
+      }
+      catch (BlinkException e)
+      {
+         throw new XmitException (e);
+      }
+   }
+
+   private String getInfo ()
+   {
+      if (dgmCh != null)
+         return info (dgmCh);
+      else if (acceptCh != null)
+         return info (acceptCh);
+      else
+         return "?";
+   }
+   
    @Override
    public void run ()
    {
@@ -150,7 +230,7 @@ public class Server extends com.pantor.xmit.Server
       }
       catch (Throwable e)
       {
-         log.fatal (e, "%s: %s", info (ch), getInnerCause (e));
+         log.fatal (e, "%s: %s", getInfo (), getInnerCause (e));
       }
    }
 
@@ -183,7 +263,7 @@ public class Server extends com.pantor.xmit.Server
          }
          catch (Exception e)
          {
-            log.warn ("%s: onNegotiate: %s", info (ch), getInnerCause (e));
+            log.warn ("%s: onNegotiate: %s", getInfo (), getInnerCause (e));
          }
          
          if (req.wasAccepted ())
@@ -271,7 +351,8 @@ public class Server extends com.pantor.xmit.Server
    private int keepaliveInterval;
    private NegotiationObserver negObs;
    private final int port;
-   private DatagramChannel ch;
+   private DatagramChannel dgmCh;
+   private ServerSocketChannel acceptCh;
    private final Logger log =
       Logger.Manager.getLogger (com.pantor.xmit.Server.class);
 }

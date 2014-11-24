@@ -47,7 +47,6 @@ import com.pantor.blink.Dispatcher;
 import com.pantor.blink.Observer;
 import com.pantor.blink.BlinkException;
 
-import java.nio.channels.DatagramChannel;
 import java.nio.channels.Selector;
 import java.nio.channels.SelectionKey;
 import java.nio.ByteBuffer;
@@ -61,167 +60,63 @@ import java.util.Iterator;
 
 import static com.pantor.xmit.impl.Util.*;
 
-public final class TransportSession implements Runnable
+abstract class TransportSession implements Runnable
 {
-   private final static int Sec = 1000;
-   private final static int TransportSessionEstablishmentTimeout = 5 * Sec;
+   final static int Sec = 1000;
+   final static int TransportSessionEstablishmentTimeout = 5 * Sec;
+
+   static enum TransportType
+   {
+      Datagram, Stream
+   }
    
-   TransportSession (DatagramChannel ch, ByteBuffer bb, Server srv)
+   TransportSession (TransportType transportType, Server srv)
       throws BlinkException
    {
-      this.ch = ch;
       this.srv = srv;
-      this.inBb = bb;
-      this.inBuf = new ByteBuf (inBb.array (), 0, inBb.limit ());
       DefaultObsRegistry oreg = new DefaultObsRegistry (srv.getObjectModel ());
       oreg.addObserver (this);
       this.rd = new CompactReader (srv.getObjectModel (), oreg);
-      this.outBb = ByteBuffer.allocate (1500);
-      this.outBuf = new ByteBuf (outBb.array ());
+      if (transportType == TransportType.Datagram)
+      {
+         this.outBb = ByteBuffer.allocate (1500);
+         this.outBuf = new ByteBuf (outBb.array ());
+      }
+      else
+      {
+         this.outBb = null;
+         this.outBuf = new ByteBuf (4096);
+      }
       this.wr = new CompactWriter (srv.getObjectModel (), outBuf);
       this.timeout = TransportSessionEstablishmentTimeout;
-   }
-
-   @Override
-   public void run ()
-   {
-      try
-      {
-         // Process initial packet
-
-         decodePacket ();
-            
-         // Enter event loop
-
-         eventLoop ();
-      }
-      catch (Throwable e)
-      {
-         log.error (e, "%s: %s", info (ch), getInnerCause (e));;
-      }
    }
 
    void updateTimeout (int timeout)
    {
       this.timeout = Math.min (this.timeout, timeout);
    }
-      
-   private void eventLoop () throws IOException
-   {
-      try
-      {
-         long effectiveTimeout = timeout / 8;
-         Selector selector = Selector.open ();
-         SelectionKey key = ch.register (selector, SelectionKey.OP_READ);
-         while (! done)
-         {
-            int n = selector.select (effectiveTimeout);
-            if (n > 0)
-               try
-               {
-                  Set<SelectionKey> keys = selector.selectedKeys ();
-                  Iterator<SelectionKey> i = keys.iterator();
-                  while (i.hasNext ())
-                  {
-                     SelectionKey k = i.next ();
-                     if (k.isReadable ())
-                        receivePacket ();
-                     i.remove();
-                  }
-               }
-               catch (java.net.PortUnreachableException e)
-               {
-                  log.warn ("%s: Port is unreachable, terminating transport " +
-                            "session", info (ch));
-                  ServerSession s = xmitSession;
-                  if (s != null)
-                     s.onTransportLost ("Port unreachable", e);
-                  done = true;
-               }
-               catch (Throwable e)
-               {
-                  log.warn (e, "%s: Terminating transport session: %s",
-                            info (ch), getInnerCause (e));
-                  ServerSession s = xmitSession;
-                  if (s != null)
-                     s.onTransportLost (getInnerCause (e), e);
-                  done = true;
-               }
-            else
-               handleTimeout ();
 
-            ServerSession s = xmitSession;
-            if (s != null)
-               s.checkTimers (effectiveTimeout);
-         }
-      }
-      finally
-      {
-         ch.close ();
-         done = true;
-      }
-   }
-
-   private void handleTimeout ()
+   abstract String getInfo ();
+   
+   void handleTimeout ()
    {
       if (xmitSession == null)
       {
          if (pendTerm || negRejected)
          {
-            log.info ("%s: Transport session terminated", info (ch));
+            log.info ("%s: Transport session terminated", getInfo ());
             done = true;
          }
          else
          {
             log.warn ("%s: No Xmit:Establish request received " +
                       "within the last %s seconds, giving up on" +
-                      " this transport", info (ch),
-                      TransportSessionEstablishmentTimeout / 1000);
+                      " this transport", getInfo (), timeout / 1000);
          }
          done = true;
       }
    }
       
-   private void receivePacket () throws BlinkException, IOException
-   {
-      inBb.clear ();
-      ch.receive (inBb);
-      inBb.flip ();
-      try
-      {
-         if (inBb.limit () > 0)
-         {
-            inBuf.clear ();
-            inBuf.setPos (inBb.limit ());
-            inBuf.flip ();
-            decodePacket ();
-         }
-         else
-         {
-            log.warn ("%s: Empty packet", info (ch));
-         }
-      }
-      finally
-      {
-         rd.reset ();
-      }
-   }
-
-   private void decodePacket () throws BlinkException, IOException
-   {
-      ServerSession s = xmitSession;
-      if (s != null)
-         s.onPacketStart ();
-      rd.read (inBuf);
-      if (! rd.isComplete ())
-      {
-         rd.reset ();
-         log.warn ("%s: Incomplete Blink content in packet", info (ch));
-      }
-      if (s != null)
-         s.onPacketEnd ();
-   }
-
    private boolean checkEstablished (Object o)
    {
       if (xmitSession != null)
@@ -229,7 +124,7 @@ public final class TransportSession implements Runnable
       else
       {
          log.warn ("%s: Ignoring unsolicited message on " +
-                   "not established session: %s", info (ch), getMsgType (o));
+                   "not established session: %s", getInfo (), getMsgType (o));
          return false;
       }
    }
@@ -333,7 +228,7 @@ public final class TransportSession implements Runnable
    @Blink.Ns ("Xmit")
    public void onAnyOtherXmit (Object o)
    {
-   log.warn ("%s: Ignoring Xmit message: %s", info (ch),
+   log.warn ("%s: Ignoring Xmit message: %s", getInfo (),
    getMsgType (o));
    }
 */
@@ -341,7 +236,7 @@ public final class TransportSession implements Runnable
    void sendEstRej (xmit.Establish est, xmit.EstablishmentRejectCode code,
                     String reason)
    {
-      log.warn ("%s [%s]: Establish rejected: %s", info (ch),
+      log.warn ("%s [%s]: Establish rejected: %s", getInfo (),
                 toUuid (est.getSessionId ()), reason);
       xmit.EstablishmentReject rej = new xmit.EstablishmentReject ();
       rej.setRequestTimestamp (est.getTimestamp ());
@@ -358,7 +253,7 @@ public final class TransportSession implements Runnable
    void sendNegRej (xmit.Negotiate est, xmit.NegotiationRejectCode code,
                     String reason)
    {
-      log.warn ("%s [%s]: Negotiate rejected: %s", info (ch),
+      log.warn ("%s [%s]: Negotiate rejected: %s", getInfo (),
                 toUuid (est.getSessionId ()), reason);
       xmit.NegotiationReject rej = new xmit.NegotiationReject ();
       rej.setRequestTimestamp (est.getTimestamp ());
@@ -382,7 +277,7 @@ public final class TransportSession implements Runnable
       catch (Exception e)
       {
          String reason = String.format (
-            "%s: Cannot send %s: %s", info (ch), getMsgType (msg),
+            "%s: Cannot send %s: %s", getInfo (), getMsgType (msg),
             getInnerCause (e));
          ServerSession s = xmitSession;
          if (s != null)
@@ -453,14 +348,7 @@ public final class TransportSession implements Runnable
       flush ();
    }
 
-   private void flush () throws IOException
-   {
-      outBuf.flip ();
-      outBb.limit (outBuf.size ());
-      outBb.position (0);
-      ch.write (outBb);
-      outBuf.clear ();
-   }
+   abstract void flush () throws IOException;
       
    public synchronized void terminate (String reason, byte [] sessionId,
                                        xmit.TerminationCode code)
@@ -480,15 +368,12 @@ public final class TransportSession implements Runnable
       }
       catch (Exception e)
       {
-         log.warn ("%s: Graceful termination failed: %s", info (ch),
+         log.warn ("%s: Graceful termination failed: %s", getInfo (),
                    getInnerCause (e));
       }
    }
 
-   SocketAddress getSourceAddress () throws IOException
-   {
-      return ch.getRemoteAddress ();
-   }
+   abstract SocketAddress getSourceAddress () throws IOException;
 
    void traceResponse (Object msg, byte [] snId, long tsp)
    {
@@ -502,19 +387,16 @@ public final class TransportSession implements Runnable
                  toUuid (snId), nanoToStr (tsp));
    }
 
-   private final DatagramChannel ch;
    private final CompactWriter wr;
-   private final CompactReader rd;
-   private final ByteBuffer inBb;
-   private final ByteBuf inBuf;
-   private final ByteBuffer outBb;
-   private final ByteBuf outBuf;
+   final CompactReader rd;
+   final ByteBuffer outBb;
+   final ByteBuf outBuf;
    private final Server srv;
-   private final Logger log =
+   final Logger log =
       Logger.Manager.getLogger (TransportSession.class);
-   private int timeout;
-   private volatile ServerSession xmitSession;
-   private volatile boolean done;
+   int timeout;
+   volatile ServerSession xmitSession;
+   volatile boolean done;
    private volatile boolean pendTerm;
    private volatile boolean negRejected;
 }

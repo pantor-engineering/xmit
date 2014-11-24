@@ -342,6 +342,11 @@ final class ServerSession implements com.pantor.xmit.Server.Session
       }
    }
 
+   void onChunkStart ()
+   {
+      lastPacketReceivedTsp = now ();
+   }
+
    void onPacketStart ()
    {
       lastPacketReceivedTsp = now ();

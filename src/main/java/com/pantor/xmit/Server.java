@@ -41,6 +41,7 @@ import com.pantor.blink.ObjectModel;
 import com.pantor.blink.Observer;
 import com.pantor.blink.BlinkException;
 import java.nio.channels.DatagramChannel;
+import java.nio.channels.ServerSocketChannel;
 import java.io.IOException;
 import java.net.SocketAddress;
 import java.util.UUID;
@@ -67,8 +68,8 @@ import java.util.UUID;
 public abstract class Server implements Runnable
 {
    /**
-      Creates a new server listening for incoming datagrams on the
-      specified port.
+      Creates a new server listening for incoming datagrams or TCP
+      connects on the specified port.
 
       <p>Requests for negotiating new session will
       be forwarded to the specified negotiation observer.</P>
@@ -86,8 +87,8 @@ public abstract class Server implements Runnable
    }
 
    /**
-      Creates a new server listening for incoming datagrams on the
-      specified port.
+      Creates a new server listening for incoming datagrams or TCP
+      connects on the specified port.
 
       <p>Requests for negotiating new session will
       be forwarded to the specified negotiation observer.</P>
@@ -123,8 +124,26 @@ public abstract class Server implements Runnable
       @param negObs the negotiation observer
     */
    
-   public static  Server createServer (DatagramChannel ch, ObjectModel om,
-                                       NegotiationObserver negObs)
+   public static Server createServer (DatagramChannel ch, ObjectModel om,
+                                      NegotiationObserver negObs)
+   {
+      return new com.pantor.xmit.impl.Server (ch, om, negObs);
+   }
+
+   /**
+      Creates a new server listening for incoming connection on the
+      specified server socket channel.
+
+      <p>Requests for negotiating new session will
+      be forwarded to the specified negotiation observer.</P>
+
+      @param ch the server socket channel to listen to
+      @param om the Blink object model
+      @param negObs the negotiation observer
+    */
+   
+   public static Server createServer (ServerSocketChannel ch, ObjectModel om,
+                                      NegotiationObserver negObs)
    {
       return new com.pantor.xmit.impl.Server (ch, om, negObs);
    }

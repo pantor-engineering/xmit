@@ -36,7 +36,7 @@
 package com.pantor.xmit.impl;
 
 import java.nio.ByteBuffer;
-import java.nio.channels.DatagramChannel;
+import java.nio.channels.NetworkChannel;
 import java.util.UUID;
 import java.util.Collection;
 import java.io.IOException;
@@ -103,7 +103,7 @@ public final class Util
       }
    }
 
-   public static String info (DatagramChannel ch)
+   public static String info (NetworkChannel ch)
    {
       try
       {
