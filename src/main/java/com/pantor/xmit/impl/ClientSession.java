@@ -710,7 +710,7 @@ public final class ClientSession implements Client.Session
       if (isValid (obj) && isEstablished (obj))
       {
          receivedMsg ();
-         long nextSeqNo = obj.getNextSeqNo (); 
+         long nextSeqNo = obj.getNextSeqNo ();
          long end = nextSeqNo + obj.getCount ();
          if (end >= requestedRetransmitEnd)
             reRequestRetransmitAt = 0;
@@ -718,6 +718,10 @@ public final class ClientSession implements Client.Session
             reRequestRetransmitAt = end;
 
          isRetransmit = true;
+
+         if (lastRetReqTsp <= obj.getRequestTimestamp ())
+            lastRetReqTsp = 0;
+         
          startFrame (nextSeqNo, "Xmit:Retransmission");
       }
    }
@@ -939,37 +943,55 @@ public final class ClientSession implements Client.Session
 
       requestRetransmit ();
    }
+
+   private final static long SecNs = 1000000;
+   private final static long RetransReqHoldbackTime = 2 * SecNs;
+
+   private boolean pushRetReq (long tsp)
+   {
+      synchronized (pendRetReqs)
+      {
+         long elapsedSinceLastRetReq = tsp - lastRetReqTsp;
+         if (elapsedSinceLastRetReq > RetransReqHoldbackTime)
+         {
+            pendRetReqs.add (tsp);
+            lastRetReqTsp = tsp;
+            return true;
+         }
+         else
+            return false;
+      }
+   }
    
    private void requestRetransmit ()
    {
       long tsp = nowNano ();
-      synchronized (pendRetReqs)
-      {
-         pendRetReqs.add (tsp);
-      }
 
-      int count = (int) (requestedRetransmitEnd - nextExpectedIncomingSeqNo);
-      
-      RetransmitRequest rr = new RetransmitRequest ();
-      rr.setSessionId (sessionIdBytes);
-      rr.setTimestamp (tsp);
-      rr.setFromSeqNo (nextExpectedIncomingSeqNo);
-      rr.setCount (count);
-      
-      log.info ("Requesting retransmission of %d messages " +
-                "from seq no %d (req tsp: %s)", count,
-                nextExpectedIncomingSeqNo, nanoToStr (tsp));
-      
-      reRequestRetransmitAt = 0;
-      
-      try
+      if (pushRetReq (tsp))
       {
-         innerSend (rr);
-      }
-      catch (Exception e)
-      {
-         innerTerminate ("Failed to send retransmit request", e,
-                         TerminationCode.UnspecifiedError);
+         int count = (int) (requestedRetransmitEnd - nextExpectedIncomingSeqNo);
+      
+         RetransmitRequest rr = new RetransmitRequest ();
+         rr.setSessionId (sessionIdBytes);
+         rr.setTimestamp (tsp);
+         rr.setFromSeqNo (nextExpectedIncomingSeqNo);
+         rr.setCount (count);
+      
+         log.info ("Requesting retransmission of %d messages " +
+                   "from seq no %d (req tsp: %s)", count,
+                   nextExpectedIncomingSeqNo, nanoToStr (tsp));
+      
+         reRequestRetransmitAt = 0;
+      
+         try
+         {
+            innerSend (rr);
+         }
+         catch (Exception e)
+         {
+            innerTerminate ("Failed to send retransmit request", e,
+                            TerminationCode.UnspecifiedError);
+         }
       }
    }
 
@@ -1558,7 +1580,7 @@ public final class ClientSession implements Client.Session
    private Object credentials;
    
    private volatile int serverKeepaliveInterval;
-   private volatile long retReqTsp;
+   private volatile long lastRetReqTsp;
    private volatile long lastMsgReceivedTsp;
    private volatile long lastMsgSentTsp;
    private volatile boolean negotiated;
