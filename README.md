@@ -28,14 +28,14 @@ Example
 
 A sample server and client is available in the sample directory. You can build them by running gradle like this:
 
-	gradle build sample
+	gradle build sampleJar
 
 The following command line shows how to start the sample server on port 4711:
 
-	java -cp jblink.jar:build/libs/xmit.jar:build/classes/sample com.pantor.test.TestServer src/sample/pingpong.blink xmit.blink 4711
+	java -cp jblink.jar:build/libs/xmit.jar:build/libs/jxmit-sample.jar com.pantor.test.TestServer src/sample/pingpong.blink xmit.blink 4711
 
 And this will start the client:
 
-	java -cp jblink.jar:build/libs/xmit.jar:build/classes/sample com.pantor.test.TestClient src/sample/pingpong.blink xmit.blink localhost:4711
+	java -cp jblink.jar:build/libs/xmit.jar:build/libs/jxmit-sample.jar com.pantor.test.TestClient src/sample/pingpong.blink xmit.blink localhost:4711
 
 
