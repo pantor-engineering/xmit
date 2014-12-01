@@ -17,6 +17,7 @@ public class TestClient implements Session.EventObserver
 {
    private final static int Sec = 1000;
    private final static int Keepalive = 2 * Sec;
+   private final static int PongCount = 300;
 
    private static test.Ping makePing (int val, int count)
    {
@@ -31,10 +32,14 @@ public class TestClient implements Session.EventObserver
       try
       {
          int val = pong.getValue ();
-         log.info ("Got pong (%d), sending ping (%d)", val, val + 1);
-         Thread.sleep (1000);
-         long seqNo = sn.send (makePing (val + 1, 1));
-         log.info ("  Sent ping with seqNo: %d", seqNo);
+         log.info ("Got pong (%d)", val);
+
+         if ((val % PongCount) == 0)
+         {
+            // Send a new batch
+            long seqNo = sn.send (makePing (val + 1, PongCount));
+            log.info ("  Sent ping with seqNo: %d (%d)", seqNo, PongCount);
+         }
       }
       catch (Throwable e)
       {
@@ -45,10 +50,10 @@ public class TestClient implements Session.EventObserver
    public void onEstablished (Session session)
    {
       log.info ("Sesssion negotiated and established");
-      log.info ("Sending first ping (1)");
+      log.info ("Sending first ping (1, %d)", PongCount);
       try
       {
-         sn.send (makePing (1, 1));
+         sn.send (makePing (1, PongCount));
       }
       catch (Throwable e)
       {
