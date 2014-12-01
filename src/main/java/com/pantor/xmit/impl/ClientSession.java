@@ -1070,7 +1070,7 @@ public final class ClientSession implements Client.Session
       requestRetransmit ();
    }
 
-   private final static long SecNs = 1000000;
+   private final static long SecNs = 1000000000;
    private final static long RetransReqHoldbackTime = 2 * SecNs;
 
    private boolean pushRetReq (long tsp)
