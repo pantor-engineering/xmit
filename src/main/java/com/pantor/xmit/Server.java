@@ -357,20 +357,28 @@ public abstract class Server implements Runnable
       public interface EventObserver
       {
          /**
-            Notifies the observer that the session has been bound to a
-            new transport.
+            Notifies the observer that the peer has requested to bind
+            the session to a new transport.
 
-            <p>The observer has the ability to reject the binding by
+            <p>The observer has the ability to reject the request by
             calling {@code e.reject ()}.</p>
 
             <p>Unless explicitly rejected through {@code e.reject ()},
-            the establish request will be accepted.</p>
+            the establishment request will be accepted.</p>
 
             @param req an establishment request
             @param s the session
          */
       
-         void onEstablish (EstablishmentRequest req, Session s);
+         void onEstablishmentRequest (EstablishmentRequest req, Session s);
+
+         /**
+            Called when an xmit session has been established
+
+            @param s the newly established xmit session
+         */
+   
+         void onEstablished (Session s);
 
          /**
             Notifies the observer that the transport has been
@@ -386,7 +394,7 @@ public abstract class Server implements Runnable
             {@code null}
             @param s the session
          */
-      
+
          void onTerminate (String reason, Throwable cause, Session s);
 
          /**
@@ -584,7 +592,7 @@ public abstract class Server implements Runnable
          @param s the session
        */
 
-      void onNegotiate (NegotiationRequest req, Session s)
+      void onNegotiationRequest (NegotiationRequest req, Session s)
          throws IOException, XmitException;
    }
 

@@ -59,24 +59,36 @@ public class TestServer implements Server.NegotiationObserver
          }
       }
 
-      public void onEstablish (EstablishmentRequest e, Server.Session s)
+      @Override
+      public void onEstablishmentRequest (EstablishmentRequest e,
+                                          Server.Session s)
+      {
+         log.info ("Session received establishment request");
+      }
+
+      @Override
+      public void onEstablished (Server.Session s)
       {
          log.info ("Session established");
       }
 
+      @Override
       public void onTerminate (String reason, Throwable cause, Server.Session s)
       {
          log.info ("Session terminated: %s", reason);
       }
-      
+
+      @Override
       public void onFinished (Server.Session s)
       {
       }
 
+      @Override
       public void onDatagramStart (Server.Session s)
       {
       }
       
+      @Override
       public void onDatagramEnd (Server.Session s)
       {
       }
@@ -85,7 +97,7 @@ public class TestServer implements Server.NegotiationObserver
    }
 
    @Override 
-   public void onNegotiate (NegotiationRequest req, Server.Session s)
+   public void onNegotiationRequest (NegotiationRequest req, Server.Session s)
       throws XmitException
    {
       s.addAppObserver (new Session (s));

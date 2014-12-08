@@ -138,7 +138,7 @@ final class ServerSession implements com.pantor.xmit.Server.Session
       {
          EstReqImpl req = new EstReqImpl (est, tsport);
          if (eventObs != null)
-            eventObs.onEstablish (req, this);
+            eventObs.onEstablishmentRequest (req, this);
          if (! req.wasRejected ())
          {
             // FIXME: Enable when/if implemented
@@ -160,6 +160,10 @@ final class ServerSession implements com.pantor.xmit.Server.Session
 
             sentMsg ();
             tsport.sendSafe (ack);
+
+            if (eventObs != null)
+               eventObs.onEstablished (this);
+            
             return true;
          }
       }

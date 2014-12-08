@@ -259,7 +259,7 @@ public class Server extends com.pantor.xmit.Server
 
          try
          {
-            negObs.onNegotiate (req, s);
+            negObs.onNegotiationRequest (req, s);
          }
          catch (Exception e)
          {
