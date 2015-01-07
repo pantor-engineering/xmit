@@ -228,10 +228,10 @@ NotApplied/0x10202 ->
 # Identification implementations (Credentials)
 #
 
-StringIdentification ->
+StringIdentification/0x10170 ->
   string Identity
 
-FixIdentification ->
+FixIdentification/0x10171 ->
   string    BeginString,
   string    SenderCompID,
   string    TargetCompID,
