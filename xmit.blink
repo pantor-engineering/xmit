@@ -225,11 +225,18 @@ NotApplied/0x10202 ->
   u32 Count
 
 #
-# Identification implementations
+# Identification implementations (Credentials)
 #
 
-StringIdentification/0x10170 ->
+StringIdentification ->
   string Identity
+
+FixIdentification ->
+  string    BeginString,
+  string    SenderCompID,
+  string    TargetCompID,
+  string    SenderSubID?,
+  string    TargetSubID?
 
 #
 # Experimental messages
